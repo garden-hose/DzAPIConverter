@@ -494,7 +494,7 @@
         local trigger trig = DzCompat_ResolveFuncByName(func)
         if trig != null then
             // verification needed
-			call BlzTriggerRegisterFrameEvent(trig, DzCompat_GetFrame(frame), DzCompat_ConvertFrameEvent(eventId))            call BlzTriggerRegisterFrameEvent(trig, DzCompat_GetFrame(frame), DzCompat_ConvertFrameEvent(eventId))
+			call BlzTriggerRegisterFrameEvent(trig, DzCompat_GetFrame(frame), DzCompat_ConvertFrameEvent(eventId))
 			//call BlzTriggerRegisterFrameEvent(trig, DzCompat_GetFrame(frame), ConvertFrameEventType(eventId))
         endif
     endfunction
