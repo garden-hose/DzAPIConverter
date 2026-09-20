@@ -13,6 +13,8 @@ final class ConverterConstants {
     // Implemented natives (exact list from the original R script)
     // -------------------------------------------------------------------------
     static final Set<String> IMPLEMENTED_NATIVES = new LinkedHashSet<>(Arrays.asList(
+        // DzCompat_Core.j - misc natives
+        "UnitAlive",
         // DzCompat_Frame.j
         "DzCreateFrame", "DzCreateSimpleFrame", "DzCreateFrameByTagName", "DzDestroyFrame",
         "DzFrameFindByName", "DzSimpleFrameFindByName", "DzGetGameUI", "DzFrameSetPoint",
