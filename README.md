@@ -35,6 +35,11 @@ ExExecuteScript workaround uses your map tables (item.ini, ability.ini, etc), to
 - Place your map's tables (unit.ini, item.ini, ability.ini, etc) in the table path folder
 - During conversion, if your map uses ExExecuteScript, it will automatically scan the script and rewrite the lines based on the map tables
 
+Notes about the save and load archive system
+- Emulates KK server save in your local machine
+- Saves are written to a .pld file
+- The save file is located at Documents\Warcraft III\CustomMapData\DzCompat_Archive\Map Name\
+- The system is partially working, still need to adjust a few values that aren't saving and loading
 
 For more info and discussions join the discord - https://discord.gg/nVz2frA7Y7
 
