@@ -662,27 +662,38 @@
 
     // ---- [REAL] IS_ATTACK/DAMAGE_TYPE/WEAPON_TYPE/ATTACK_TYPE all use genuine
     // Reforged natives (BlzGetEventIsAttack/DamageType/WeaponType/AttackType -
-    // an earlier pass wrongly concluded these didn't exist based on a web
-    // search that missed them; verified this time against jassdoc's actual
-    // common.j). Only valid inside EVENT_UNIT_DAMAGED/EVENT_PLAYER_UNIT_DAMAGED,
-    // same as the original EX native.
-    // [APPROX] PHYSICAL: common.j's own docs note that neither attacktype nor
-    // damagetype reliably distinguishes a physical attack from spell damage
-    // (both commonly default to their "_NORMAL" constant either way) -
-    // BlzGetEventIsAttack is the one native actually designed to answer this,
-    // so it's reused here too, matching common community convention.
-    // [PORT LIMITATION] VALID/IS_RANGED: no confirmed native exposes either of
-    // these - VALID has no "was this actually inside a damage event" flag to
-    // check, and IS_RANGED has no reliable signal (weapontype is documented as
-    // sound-only, not a melee/ranged indicator).
+    // verified against jassdoc's common.j). Only valid inside
+    // EVENT_UNIT_DAMAGED / EVENT_PLAYER_UNIT_DAMAGED, same as the original EX
+    // native.
+    // [APPROX] PHYSICAL: maps DAMAGE_TYPE_NORMAL (engine id 4) to "physical",
+    // matching the common JAPI / port convention that treats the stock attack
+    // damage type as physical and everything else as spell/special. This is
+    // more faithful than reusing BlzGetEventIsAttack (which answers a different
+    // question and collapsed PHYSICAL into IS_ATTACK).
+    // [APPROX] VALID: Reforged has no "is a damage event currently on the
+    // stack" flag. Returning 1 matches the working assumption of every caller
+    // (they only invoke this inside a damage handler) and the behaviour of
+    // this native.
+    // [APPROX] IS_RANGED: Reforged does not expose the event's ranged flag.
+    // Approximate as "this is an attack AND the source unit is typed as a
+    // ranged attacker". Wrong for melee units dealing triggered ranged-style
+    // damage and for ranged units dealing pure spell damage, but it is the
+    // best signal available without map-specific knowledge.
     function EXGetEventDamageData takes integer edd_type returns integer
-        if edd_type == 2 then //EVENT_DAMAGE_DATA_IS_ATTACK
+        if edd_type == 0 then //EVENT_DAMAGE_DATA_VAILD
+            return 1
+        elseif edd_type == 1 then //EVENT_DAMAGE_DATA_PHYSICAL
+            if BlzGetEventDamageType() == DAMAGE_TYPE_NORMAL then
+                return 1
+            endif
+            return 0
+        elseif edd_type == 2 then //EVENT_DAMAGE_DATA_IS_ATTACK
             if BlzGetEventIsAttack() then
                 return 1
             endif
             return 0
-        elseif edd_type == 1 then //EVENT_DAMAGE_DATA_PHYSICAL
-            if BlzGetEventIsAttack() then
+        elseif edd_type == 3 then //EVENT_DAMAGE_DATA_IS_RANGED
+            if BlzGetEventIsAttack() and IsUnitType(GetEventDamageSource(), UNIT_TYPE_RANGED_ATTACKER) then
                 return 1
             endif
             return 0
