@@ -1,29 +1,7 @@
 // ============================================================================
 // DzCompat_Stats.j
-// Batch 6: Unit stats, item cosmetics, ability details, terrain queries
-//
-// These are the user's own best-effort/draft implementations - an attempt to
-// architect something as close as possible to the real natives, NOT
-// confirmed exact matches. This revision:
-//   - removes functions that duplicated already-VERIFIED real implementations
-//     living in DzCompat_Batch2.j / DzCompat_AbilityField.j (every duplicate
-//     found was also a regression - fake bookkeeping replacing something
-//     that actually worked; see conversation history for the full list)
-//   - fixes several compile errors (undefined natives, and integer literals
-//     passed where a typed *field constant is required - JASS enforces this
-//     at compile time, it is not just a style issue)
-//   - corrects a few confidently-stated native-existence claims that turned
-//     out to be false when checked against this project's own common.j/
-//     blizzard.j (BlzSetItemVertexColor, BlzSetUnitCollisionSize,
-//     BlzSetHeroPortraitModel, SetTextTagFont - none of these exist here)
-//   - deliberately KEEPS every function that doesn't correspond to a native
-//     declared anywhere in DzAPI.j/KKAPI.j/BlizzardAPI.j (several Get*
-//     counterparts to real Set* natives) - these are intentional additions
-//     for interface symmetry, not something to strip out just because they
-//     aren't part of the original surface.
 //
 // STATUS KEY:
-//   [VERIFIED]   - Direct wrapper of confirmed Blz/stock native
 //   [LOCAL]      - Hashtable-backed state tracking (cosmetic/UI-only, no
 //                  gameplay sync, no effect on real engine state)
 //   [APPROX]     - Mathematical approximation or best-effort technique
@@ -116,13 +94,11 @@
     // UNIT PROPERTIES - COLLISION, SELECTION, SCALING
     // ========================================================================
 
-    // [LOCAL] real native, but BlzSetUnitCollisionSize does NOT exist in this
-    // project's common.j (checked - the claim that Reforged 1.33+ added it
-    // doesn't hold for this codebase). Bookkeeping only.
+    // [LOCAL] Bookkeeping only.
     //
-    // IMPORTANT: DzCompat_Batch2.j already implements DzGetUnitCollisionSize
-    // for real via the real BlzGetUnitCollisionSize getter (that one DOES
-    // exist), reading live engine state - it has no idea this hashtable
+    // IMPORTANT: DzGetUnitCollisionSize for real via the real 
+	// BlzGetUnitCollisionSize getter (that one DOES exist),
+    // reading live engine state - it has no idea this hashtable
     // exists and will never see what gets stored here. That means calling
     // this Set has NO visible effect at all, not even through DzGetUnitCollisionSize
     // - it's a fully inert write, kept only because DzSetUnitCollisionSize is
@@ -188,12 +164,10 @@
         call SaveReal(gDzCompatUnitStateTable, GetHandleId(u), 13, offset)
     endfunction
 
-    // [LOCAL] CORRECTION: this one IS a genuinely declared native (found in
-    // KKAPI.j) - I initially mislabeled it [NOT REAL] without verifying.
-    // Its real declared signature takes `widget`, not `unit` (fixed here to
-    // match exactly - JASS requires the replacement function's signature to
-    // match the native it's replacing). Since widget is a supertype of
-    // unit, the unit-type-specific defaulting this used to do (hero/
+    // [LOCAL] 
+    // Its real declared signature takes `widget`, not `unit` 
+	// Since widget is a supertype of unit, 
+    // the unit-type-specific defaulting this used to do (hero/
     // structure/other) isn't safe here anymore - not every widget is a
     // unit, and there's no legal way to test "is this widget a unit" without
     // an illegal downcast. Simplified to a single flat default.
@@ -205,11 +179,8 @@
         return 80.0
     endfunction
 
-    // [APPROX] real native. Fixed a type-mismatch compile error: the
-    // original called widget2unit(obj), which does not exist - JASS has no
-    // legal way to downcast a widget to a unit (same category of problem as
-    // sibling-type handle casting discussed elsewhere in this project). The
-    // real declared signature genuinely takes `widget`, not `unit`, so this
+    // [APPROX] 
+    // The declared signature genuinely takes `widget`, not `unit`, so this
     // uses a generic walkability check that works for any widget instead of
     // one that needs unit-specific move-type data. That means it does NOT
     // account for the specific object's actual movement type (a flying unit
@@ -222,14 +193,13 @@
         return IsTerrainPathable(x, y, PATHING_TYPE_WALKABILITY)
     endfunction
 
-    // [APPROX] real native. Fixed a second type-mismatch compile error: the
+    // [APPROX] type-mismatch had to be fixed: the
     // original passed MOVE_TYPE_FOOT (type movetype) where IsTerrainPathable
     // requires a pathingtype - a different, incompatible type despite the
     // similar name. collision_type is now mapped to the closest matching
     // pathingtype (0/1=ground, 2=air, 3=water, anything else defaults to
-    // ground) - this mapping is a guess at what collision_type's values mean
-    // since Dz's own numbering isn't documented anywhere available; still
-    // does not account for nearby unit collision, only terrain.
+    // ground) - this mapping is a guess at what collision_type's values mean.
+    // Still does not account for nearby unit collision, only terrain.
     function DzPositionCanPlaceAround takes real x, real y, real collision_size, integer collision_type returns boolean
         if collision_type == 2 then
             return IsTerrainPathable(x, y, PATHING_TYPE_FLYABILITY)
@@ -246,7 +216,7 @@
     // genuinely declared in KKAPI.j but have no known real Reforged technique
     // backing them (regen rate and min/max speed floors/ceilings aren't
     // exposed as writable fields anywhere in common.j/blizzard.j - checked).
-    // [LOCAL] bookkeeping only, unchanged from the original draft.
+    // [LOCAL] bookkeeping only
 
     function DzSetUnitLifeRegen takes unit whichUnit, real regen returns boolean
         call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 20, regen)
@@ -292,11 +262,8 @@
         return 522.0
     endfunction
 
-    // [VERIFIED] real native, and this pair CAN be upgraded to a genuine
-    // real implementation: DzSetUnitCastPoint/DzSetUnitBackSwing (no ability
-    // parameter - distinct from DzSetUnitAbilityCastPoint/BackSwing in
-    // DzCompat_AbilityField.j) match UNIT_RF_CAST_POINT/UNIT_RF_CAST_BACK_SWING
-    // exactly - the same real per-unit fields already confirmed and used for
+    // Match UNIT_RF_CAST_POINT/UNIT_RF_CAST_BACK_SWING exactly - 
+    // the same real per-unit fields already confirmed and used for
     // the ability-scoped versions, just without an unused abil_id parameter
     // this time since none was ever declared for these.
     function DzSetUnitCastPoint takes unit whichUnit, real cast_point returns boolean
@@ -329,8 +296,7 @@
     // ========================================================================
     // UNIT HERO ATTRIBUTES
     // ========================================================================
-    // [LOCAL] bookkeeping only, unchanged from the original draft - no real
-    // native backing found for any of these.
+    // [LOCAL] bookkeeping only
 
     function DzSetHeroPrimaryAttributeType takes unit whichUnit, integer attribute, boolean keep_primary_bonus returns boolean
         call SaveInteger(gDzCompatUnitStateTable, GetHandleId(whichUnit), 30, attribute)
@@ -368,15 +334,10 @@
     // own identical private copy, which is exactly the kind of duplicate-name
     // problem that surfaces once "private" no longer isolates it per-file).
 
-    // [VERIFIED] real native. Fixed a compile error: the original passed the
-    // raw integer literal 0x0E where BlzSetAbilityRealLevelField's 2nd
-    // parameter requires a typed abilityreallevelfield value - JASS rejects
-    // that at compile time, it isn't just an unverified guess, it's a type
-    // mismatch. ABILITY_RLF_CASTING_TIME (rawcode 'acas') is a real, generic
+    // ABILITY_RLF_CASTING_TIME (rawcode 'acas') is a real, generic
     // field following the same short-lowercase-mnemonic pattern already
     // confirmed reliable for the other generic ability fields in this
-    // project (aran/aare/acdn/amcs/adur/ahdu), so this is now a genuine
-    // real-native implementation, not a fallback guess.
+    // project (aran/aare/acdn/amcs/adur/ahdu)
     function DzSetUnitAbilityCastTime takes unit u, integer abil_id, real value returns boolean
         local ability a = BlzGetUnitAbility(u, abil_id)
         if a == null then
@@ -414,10 +375,8 @@
     // ITEM COSMETICS
     // ========================================================================
 
-    // [LOCAL] real native, but BlzSetItemVertexColor/BlzGetItemVertexColor do
-    // NOT exist in this project's common.j (checked earlier in this
-    // conversation and re-confirmed here) - no real vertex-color native
-    // exists for items at all, only for units and special effects.
+    // [LOCAL] No real vertex-color native exists 
+    // for items at all, only for units and special effects.
     // Bookkeeping only; corrected from the original's false "[VERIFIED]" tag.
     function DzItemSetVertexColor takes item Item, integer color returns nothing
         call SaveInteger(gDzCompatItemStateTable, GetHandleId(Item), 3, color)
@@ -466,11 +425,7 @@
     // TEXT TAG CUSTOMIZATION
     // ========================================================================
 
-    // [LOCAL] CORRECTION: these ARE genuinely declared natives (found in
-    // KKAPI.j) - I initially mislabeled them [NOT REAL] by trusting the
-    // original draft's comment without independently verifying it myself.
-    // The claimed real native (SetTextTagFont) still does not exist though
-    // (checked and confirmed) - bookkeeping only, has no effect on any text
+    // [LOCAL] bookkeeping only, has no effect on any text
     // tag's rendered font.
     function DzTextTagSetFont takes string fileName returns nothing
         call SaveStr(gDzCompatTextTagStateTable, 0, 1, fileName)
@@ -480,11 +435,6 @@
         return LoadStr(gDzCompatTextTagStateTable, 0, 1)
     endfunction
 
-    // [LOCAL] [NOT REAL] this correction is now for something else - it
-    // turns out DzTextTagSetStartAlpha/SetShadowColor/GetShadowColor below
-    // are ALSO genuinely declared natives (also found in KKAPI.j on
-    // independent verification), not additions either. Every text-tag
-    // native in this section is real; none of them are [NOT REAL]. All are
     // [LOCAL] bookkeeping since no real native backs any of them.
     function DzTextTagSetStartAlpha takes texttag t, integer alpha returns nothing
         call SaveInteger(gDzCompatTextTagStateTable, GetHandleId(t), 1, alpha)

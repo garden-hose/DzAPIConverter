@@ -1,13 +1,10 @@
 // ============================================================================
 // DzCompat_Sync.j
 // Sync-data natives (DzSyncData family + trigger registration).
-// Extracted from the former DzCompat_Batch2.j for the modular layout.
 //
-// STATUS: [VERIFIED] - maps directly onto BlzSendSyncData /
-// BlzTriggerRegisterPlayerSyncEvent / BlzGetTriggerSync*.
 // ============================================================================
 
-    // ---- [VERIFIED] sync data ------------------------------------------------
+    // ---- sync data ------------------------------------------------
     function DzSyncData takes string prefix, string data returns nothing
         call BlzSendSyncData(prefix, data)
     endfunction

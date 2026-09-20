@@ -10,8 +10,6 @@
 //     DzTriggerRegisterMouseEvent, DzGetTriggerKey, DzGetTriggerKeyPlayer)
 //
 // STATUS:
-//   [VERIFIED]  DzTriggerRegisterKeyEventByCode
-//   [VERIFIED]  DzGetTriggerKey — full OSKEY->VK table (DzCompat_OsKeyToVk)
 //   [ARCHITECTED] DzTriggerRegisterKeyEvent / DzTriggerRegisterMouseEvent /
 //                 DzGetTriggerKeyPlayer (built on real Blz* / EVENT_PLAYER_MOUSE_*)
 //   [APPROX]    DzSetUnitModel via BlzSetUnitSkin (string -> skin/rawcode id)
@@ -50,7 +48,7 @@ endglobals
     // Key events - ByCode
     // ========================================================================
 
-    // [VERIFIED] BlzTriggerRegisterPlayerKeyEvent
+    // BlzTriggerRegisterPlayerKeyEvent
     // status: 1 = key down, 0 = key up (status==1 -> keyDown true)
     // sync: when true, register for every player so the event can be used in
     // shared trigger logic; when false, only the local player (UI-local keys).
@@ -124,7 +122,7 @@ endglobals
     endfunction
 
     // ========================================================================
-    // OSKEY -> Dz/Windows VK conversion
+    // OSKEY -> Dz/Windows VK conversion adopted from maxou
     // Dz key codes are Windows VK_* integers. Reforged key events yield
     // oskeytype; this table maps them so DzGetTriggerKey returns values that
     // match the integer codes maps register with.
@@ -712,7 +710,7 @@ endglobals
     //    return GetHandleId(BlzGetTriggerPlayerKey())
     //endfunction
 
-    // [VERIFIED] Which key was pressed, returned as a Dz/Windows VK code.
+    // Which key was pressed, returned as a Dz/Windows VK code.
     // Uses the full OSKEY -> VK table comparisons
     // against the integer key codes maps register with actually match.
     function DzGetTriggerKey takes nothing returns integer

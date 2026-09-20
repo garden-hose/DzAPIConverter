@@ -1,6 +1,5 @@
 // ============================================================================
 // DzCompat_StringBit.j
-// Batch 4: string utility + bitwise natives from KKAPI.j
 //
 // These are pure algorithms with no engine dependency, so unlike the other
 // batches this one is implemented outright rather than wrapping a Blz native
@@ -12,7 +11,7 @@
     // BITWISE
     // ============================================================
 
-    // [VERIFIED] real natives since patch 1.31 - simple passthrough
+    // real natives since patch 1.31 - simple passthrough
     function DzBitAnd takes integer a, integer b returns integer
         return BlzBitAnd(a, b)
     endfunction

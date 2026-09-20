@@ -281,7 +281,7 @@
     endfunction
 
     function DzFrameGetEnable takes integer frame returns boolean
-        return BlzFrameGetEnable(DzCompat_GetFrame(frame)) // [VERIFIED] confirmed against real common.j
+        return BlzFrameGetEnable(DzCompat_GetFrame(frame))
     endfunction
 
     function DzFrameSetFocus takes integer frame, boolean enable returns boolean
@@ -430,7 +430,7 @@
     // EDITBOX_TEXT_CHANGED=9, POPUPMENU_ITEM_CHANGED=10, MOUSE_DOUBLECLICK=11,
     // SPRITE_ANIM_UPDATE=12, SLIDER_VALUE_CHANGED=13, DIALOG_CANCEL=14,
     // DIALOG_ACCEPT=15, EDITBOX_ENTER=16), since Dz's frame system sits on
-    // top of the same underlying engine. THIS IS UNVERIFIED - if clicks fire
+    // top of the same underlying engine. [UNVERIFIED] - if clicks fire
     // as "mouse enter" or nothing fires at all, this numbering is wrong for
     // your Dz build.
     //

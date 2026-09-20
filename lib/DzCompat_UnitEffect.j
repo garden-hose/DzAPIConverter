@@ -1,7 +1,6 @@
 // ============================================================================
 // DzCompat_UnitEffect.j
 // Unit visual/state natives, mouse tracking, effect timers, queue orders.
-// Content extracted from the former DzCompat_Batch2.j for the modular layout.
 // Globals live in DzCompat_Core.j / are duplicated here for standalone use.
 // ============================================================================
 
@@ -45,7 +44,7 @@ endglobals
         return LoadReal(gDzCompatMouseTrack, GetPlayerId(GetTriggerPlayer()), 1)
     endfunction
 
-    // ---- [VERIFIED] misc ------------------------------------------------------
+    // ---- misc ------------------------------------------------------
     // DzExecuteFunc needs no wrapper at all - it's calling into the same slot
     // stock JASS already fills with the real native "ExecuteFunc". If your
     // war3map.j declares both, just delete the Dz declaration and rename call
@@ -54,7 +53,7 @@ endglobals
         call ExecuteFunc(funcName)
     endfunction
 
-    // ---- [VERIFIED] DzUnitChangeAlpha -----------------------------------------
+    // ---- DzUnitChangeAlpha -----------------------------------------
     // Stock JASS has always had a real native for this - no Blz-era addition
     // needed. forceUpdate is dropped since SetUnitVertexColor applies
     // immediately; RGB channels default to full since Dz's native only
@@ -63,7 +62,7 @@ endglobals
         call SetUnitVertexColor(whichUnit, 255, 255, 255, alpha)
     endfunction
 
-    // ---- [VERIFIED] DzUnitDisableAttack ----------------------------------------
+    // ---- DzUnitDisableAttack ----------------------------------------
     // Real native since 1.29: disabling the 'Aatk' (Attack) ability - rawcode
     // confirmed correct. Note this is a counter, not a flag (see
     // BlzUnitDisableAbility docs) - repeated enable/disable calls must stay
@@ -72,7 +71,7 @@ endglobals
         call BlzUnitDisableAbility(whichUnit, 'Aatk', disable, false)
     endfunction
 
-    // ---- [VERIFIED] DzUnitSilence -----------------------------------------------
+    // ---- DzUnitSilence -----------------------------------------------
     // No single "silence" native exists; applying the real Silence buff
     // ability so spellcasting is actually blocked by the engine (not just
     // cosmetically). SILENCE_ABILITY_ID confirmed as this map's Silence buff
@@ -86,7 +85,7 @@ endglobals
         endif
     endfunction
 
-    // ---- [VERIFIED] DzUnitSetCanSelect / DzUnitSetTargetable --------------------
+    // ---- DzUnitSetCanSelect / DzUnitSetTargetable --------------------
     // No native isolates "selectable" from "targetable" - the community
     // technique (Locust ability, rawcode confirmed correct) toggles both
     // together and also affects minimap visibility and some order behavior.
@@ -109,7 +108,7 @@ endglobals
         endif
     endfunction
 
-    // ---- [VERIFIED] unit move type (string name -> UNIT_IF_MOVE_TYPE) ----------
+    // ---- unit move type (string name -> UNIT_IF_MOVE_TYPE) ----------
     function DzUnitSetMoveType takes unit whichUnit, string moveType returns nothing
         local integer v = 0
         if moveType == "foot" then
@@ -132,7 +131,7 @@ endglobals
         call BlzSetUnitIntegerField(whichUnit, UNIT_IF_MOVE_TYPE, v)
     endfunction
 
-    // ---- [VERIFIED] unit order queue control (BlzUnit*Orders) -----------------
+    // ---- unit order queue control (BlzUnit*Orders) -----------------
     function DzUnitOrdersClear takes unit u, boolean onlyQueued returns nothing
         call BlzUnitClearOrders(u, onlyQueued)
     endfunction
@@ -156,17 +155,17 @@ endglobals
     // Batch 5 - misc unit/item/mouse natives with direct real-native equivalents
     // ============================================================================
 
-    // ---- [VERIFIED] item ability lookup ------------------------------------------
+    // ---- item ability lookup ------------------------------------------
     function DzGetItemAbility takes item whichEffect, integer index returns ability
         return BlzGetItemAbility(whichEffect, index)
     endfunction
 
-    // ---- [VERIFIED] unit name ----------------------------------------------------
+    // ---- unit name ----------------------------------------------------
     function DzSetUnitName takes unit whichUnit, string name returns nothing
         call BlzSetUnitName(whichUnit, name)
     endfunction
 
-    // ---- [VERIFIED] unit collision size (read-only in real Reforged) -----------
+    // ---- unit collision size (read-only in real Reforged) -----------
     // BlzGetUnitCollisionSize exists; there is no BlzSetUnitCollisionSize or any
     // other real native that writes this value - collision size isn't exposed
     // as a settable field at all in common.j/blizzard.j. DzSetUnitCollisionSize
@@ -189,8 +188,8 @@ endglobals
     // (matches KillUnit's own behavior - always kills regardless of magic
     // immunity/wards, same as the real native). If your map actually depends
     // on the kill being credited to `killer` (bounty gold, kill-count
-    // triggers, etc.), tell me and I'll switch this to lethal
-    // UnitDamageTarget(killer, whichUnit, ...) instead - that attributes the
+    // triggers, etc.), switch to the lethal 
+	// UnitDamageTarget(killer, whichUnit, ...) instead - that attributes the
     // kill properly but goes through the normal damage/death-trigger pipeline
     // instead of an instant kill, which is a different, larger behavior change.
     function DzKillUnit takes unit whichUnit, unit killer returns boolean
@@ -198,12 +197,12 @@ endglobals
         return true
     endfunction
 
-    // ---- [VERIFIED] mouse position -------------------------------------------------
+    // ---- mouse position -------------------------------------------------
     function DzSetMousePos takes integer x, integer y returns nothing
         call BlzSetMousePos(x, y)
     endfunction
 
-    // ---- [VERIFIED] unit position -------------------------------------------------
+    // ---- unit position -------------------------------------------------
     function DzSetUnitPosition takes unit whichUnit, real x, real y returns nothing
         call SetUnitPosition(whichUnit, x, y)
     endfunction
@@ -213,16 +212,14 @@ endglobals
         return true
     endfunction
 
-    // ---- [VERIFIED] locale ----------------------------------------------------------
+    // ---- locale ----------------------------------------------------------
     function DzGetLocale takes nothing returns string
         return BlzGetLocale()
     endfunction
 
     // ============================================================================
-    // Batch 6 - unit-scoped missile properties (confirmed via official KKAPI docs
-    // and cross-checked against real weapon-field natives). These are DISTINCT
-    // from the ability-scoped DzSetUnitAbilityMissileSpeed/Arc in
-    // DzCompat_AbilityField.j - these apply to the unit's primary attack
+    // These are DISTINCT from the ability-scoped DzSetUnitAbilityMissileSpeed/Arc 
+	// in DzCompat_AbilityField.j - these apply to the unit's primary attack
     // (weapon index 0) directly, with no ability parameter at all.
     // ============================================================================
 
@@ -242,7 +239,7 @@ endglobals
         call BlzSetUnitWeaponStringField(whichUnit, UNIT_WEAPON_SF_ATTACK_PROJECTILE_ART, 0, modelFile)
     endfunction
 
-    // ---- [VERIFIED] hero proper name -------------------------------------------
+    // ---- hero proper name -------------------------------------------
     function DzSetUnitProperName takes unit whichUnit, string name returns nothing
         call BlzSetHeroProperName(whichUnit, name)
     endfunction
@@ -268,27 +265,25 @@ endglobals
     endfunction
 
     // ============================================================================
-    // Batch 7 - Effects (confirmed via official KKAPI docs, real native mapping),
-    // revive, and a local-only data cache. Cross-checked against 7 real map
-    // scripts' actual usage (23 combined real calls for the effect batch).
+    // Effects, revive, and a local-only data cache. 
     // ============================================================================
 
-    // ---- [VERIFIED] effect position -----------------------------------------------
+    // ---- effect position -----------------------------------------------
     function DzSetEffectPos takes effect whichEffect, real x, real y, real z returns nothing
         call BlzSetSpecialEffectPosition(whichEffect, x, y, z)
     endfunction
 
-    // ---- [VERIFIED] effect scale ----------------------------------------------------
+    // ---- effect scale ----------------------------------------------------
     function DzSetEffectScale takes effect whichHandle, real scale returns nothing
         call BlzSetSpecialEffectScale(whichHandle, scale)
     endfunction
 
-    // ---- [VERIFIED] effect alpha -----------------------------------------------------
+    // ---- effect alpha -----------------------------------------------------
     function DzSetEffectVertexAlpha takes effect whichEffect, integer alpha returns nothing
         call BlzSetSpecialEffectAlpha(whichEffect, alpha)
     endfunction
 
-    // ---- [VERIFIED] effect color, unpacked from Dz's single packed integer ---------
+    // ---- effect color, unpacked from Dz's single packed integer ---------
     // Same ARGB packing convention as DzGetColor's BlzConvertColor output
     // (alpha in the top byte, then red, green, blue) - BlzSetSpecialEffectColor
     // wants the three color channels as separate integers, so this unpacks
@@ -328,13 +323,10 @@ endglobals
     endfunction
 
     // ============================================================================
-    // Batch 8 - unit group accessors, delayed effect destruction (confirmed real
-    // via cross-referencing the eiriksgata/wc3ts production TypeScript wrapper,
-    // which calls these as pre-existing natives with this exact signature/
-    // argument order).
+    // Unit group accessors, delayed effect destruction 
     // ============================================================================
 
-    // ---- [VERIFIED] unit group accessors -------------------------------------------
+    // ---- unit group accessors -------------------------------------------
     function DzGroupGetCount takes group g returns integer
         return BlzGroupGetSize(g)
     endfunction
@@ -343,13 +335,13 @@ endglobals
         return BlzGroupUnitAt(g, index)
     endfunction
 
-    // ---- [VERIFIED] immediate effect removal ---------------------------------------
+    // ---- immediate effect removal ---------------------------------------
     function DzRemoveEffect takes effect whichEffect returns boolean
         call DestroyEffect(whichEffect)
         return true
     endfunction
 
-    // ---- [APPROX] delayed effect removal --------------------------------------------
+    // ---- delayed effect removal --------------------------------------------
     // DzRemoveEffectTimed and DzDieEffectTimed have identical signatures in
     // the original headers - special effects have no "death" state the way
     // units do, so there's nothing to differentiate between a plain removal
@@ -357,8 +349,7 @@ endglobals
     // identically: a one-shot timer holding the effect handle in a
     // per-timer hashtable slot, destroying it and cleaning up when the timer
     // expires. If Dz's originals actually differed (e.g. one played a
-    // death animation first), that distinction can't be recovered without
-    // more information than is available here.
+    // death animation first)
     function DzCompat_OnEffectTimerExpire takes nothing returns nothing
         local timer t = GetExpiredTimer()
         local integer id = GetHandleId(t)
@@ -383,7 +374,7 @@ endglobals
         return DzCompat_ScheduleEffectRemoval(whichEffect, time)
     endfunction
 
-    // ---- [VERIFIED] generic handle-ID storage - these just wrap the real
+    // ---- generic handle-ID storage - these just wrap the real
     // hashtable primitives (a handle ID is already a plain integer, so there
     // is nothing Dz-specific to reproduce here).
     function DzSaveHandleId takes hashtable whichHashtable, integer parentKey, integer childKey, integer handleId returns boolean
@@ -403,11 +394,10 @@ endglobals
     endfunction
 
     // ============================================================================
-    // Batch 9 - queued order issuing. Reforged has a complete, exact-matching
+    // Queued order issuing. Reforged has a complete, exact-matching
     // BlzQueue*OrderById native family - these are direct 1:1 wraps, not
     // approximations. The 3 group variants loop over BlzGroupGetSize/
-    // BlzGroupUnitAt (already confirmed real, used in Batch 8) since there's
-    // no native that queues an order for an entire group in one call.
+    // BlzGroupUnitAt 
     // ============================================================================
 
     function DzQueueIssueImmediateOrderById takes unit whichUnit, integer order returns boolean
@@ -446,7 +436,7 @@ endglobals
         return BlzQueueNeutralTargetOrderById(forWhichPlayer, neutralStructure, unitId, target)
     endfunction
 
-    // ---- [VERIFIED] group variants - loop over the real per-unit natives above ----
+    // ---- group variants - loop over the real per-unit natives above ----
     function DzQueueGroupImmediateOrderById takes group whichGroup, integer order returns boolean
         local integer i = 0
         local integer n = BlzGroupGetSize(whichGroup)
@@ -490,7 +480,7 @@ endglobals
     endfunction
 
 
-    // ---- [VERIFIED] mouse cursor position (Reforged 3.0+) --------------------
+    // ---- mouse cursor position (Reforged 3.0+) --------------------
     // BlzGetMouseScreenPosX/Y are new in 3.0 and return the mouse's absolute
     // screen position in pixels - same shape and units as Dz's originals.
     // There's no separate "relative" native in 3.0 (no second reference point
@@ -530,7 +520,7 @@ endglobals
 
     // ---- Unit under mouse / local selection (KK-JAPI) ---
 
-    // [VERIFIED] BlzGetMouseFocusUnit is the Reforged equivalent of
+    // BlzGetMouseFocusUnit is the Reforged equivalent of
     // DzGetUnitUnderMouse 1:1.
     function DzGetUnitUnderMouse takes nothing returns unit
         return BlzGetMouseFocusUnit()

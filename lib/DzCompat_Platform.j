@@ -1,5 +1,5 @@
 // ============================================================================
-// DzCompat_PlatformStubs.j
+// DzCompat_Platform.j
 // Local "server" emulation layer for DzAPI_Map_* / KKApi* platform APIs.
 //
 // Goal: completely emulate the remote server on the client using
