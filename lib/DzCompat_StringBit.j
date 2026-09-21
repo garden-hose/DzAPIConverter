@@ -30,31 +30,37 @@
         return BlzBitXor(i, -1)
     endfunction
 
-    // [IMPLEMENTED] shifts via arithmetic. JASS integers are 32-bit signed;
-    // left shift overflow behavior matches native bitwise shifting for
-    // shift amounts 0-31. Shifting by 32+ or negative amounts is undefined
-    // here same as it would be at the engine level - guard your inputs.
-    function DzBitShiftLeft takes integer i, integer bitsToShift returns integer
-        local integer result = i
-        local integer n = 0
-        loop
-            exitwhen n == bitsToShift
-            set result = result * 2
-            set n = n + 1
-        endloop
-        return result
-    endfunction
+// [IMPLEMENTED] shifts via arithmetic. JASS integers are 32-bit signed;
+// left shift overflow behavior matches native bitwise shifting for
+// shift amounts 0-31. Negative or >= 32 amounts are defined as no-ops
+// (return the input unchanged) so a bad caller cannot infinite-loop.
+function DzBitShiftLeft takes integer i, integer bitsToShift returns integer
+    local integer result = i
+    local integer n = 0
+    if bitsToShift <= 0 or bitsToShift >= 32 then
+        return i
+    endif
+    loop
+        exitwhen n == bitsToShift
+        set result = result * 2
+        set n = n + 1
+    endloop
+    return result
+endfunction
 
-    function DzBitShiftRight takes integer i, integer bitsToShift returns integer
-        local integer result = i
-        local integer n = 0
-        loop
-            exitwhen n == bitsToShift
-            set result = result / 2
-            set n = n + 1
-        endloop
-        return result
-    endfunction
+function DzBitShiftRight takes integer i, integer bitsToShift returns integer
+    local integer result = i
+    local integer n = 0
+    if bitsToShift <= 0 or bitsToShift >= 32 then
+        return i
+    endif
+    loop
+        exitwhen n == bitsToShift
+        set result = result / 2
+        set n = n + 1
+    endloop
+    return result
+endfunction
 
     // [IMPLEMENTED] byteIndex 0-3, byte 0 = least significant.
     function DzBitGetByte takes integer i, integer byteIndex returns integer
