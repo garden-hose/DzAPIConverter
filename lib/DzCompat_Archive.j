@@ -263,6 +263,13 @@ endfunction
 function DzCompat_Archive_Reload takes nothing returns nothing
     // Ensure folder / path are known, then replace the in-memory state with
     // whatever is currently on disk.
+	// Full clear + Preloader mutates the shared in-memory archive from a
+    // per-client disk file. Safe only when every client would load the same
+    // data (single-player). Callers that need this in multiplayer must use a
+    // different design (e.g. sync the payload via BlzSendSyncData first).
+    if not bj_isSinglePlayer then
+        return
+    endif
     call DzCompat_Archive_EnsureLoaded()
     call DzCompat_Archive_Clear()
     call Preloader(gDzArchiveSavePath)
@@ -283,15 +290,18 @@ endfunction
 function DzCompat_Archive_CmdLoad takes nothing returns nothing
     local player p = GetTriggerPlayer()
     call DzCompat_Archive_EnsureLoaded()
-    // Clear + Preloader are client-local I/O. Performing them only for the
-    // local player avoids every client loading a different file into a
-    // shared table (which would desync). Other clients keep their current
-    // in-memory view.
-    if GetLocalPlayer() == p then
-        call DzCompat_Archive_Clear()
-        call Preloader(gDzArchiveSavePath)
-        call DisplayTimedTextToPlayer(p, 0, 0, 8.0, "|cff00ff00[DzCompat Archive] Reloaded from disk.|r")
+    // -load rewrites the shared hashtable from disk. Each client has its own
+    // save.pld, so:
+    //   - doing Clear+Preloader only under GetLocalPlayer() desyncs
+    //   - doing it on every client still loads different files and desyncs
+    // Restrict to single-player (the intended testing/recovery use case).
+    if not bj_isSinglePlayer then
+        call DisplayTimedTextToPlayer(p, 0, 0, 8.0, "|cffffcc00[DzCompat Archive] -load is single-player only (would desync in multiplayer). This cmd is just for testing, main save system is automatic|r")
+        return
     endif
+    call DzCompat_Archive_Clear()
+    call Preloader(gDzArchiveSavePath)
+    call DisplayTimedTextToPlayer(p, 0, 0, 8.0, "|cff00ff00[DzCompat Archive] Reloaded from disk.|r")
 endfunction
 
 function DzCompat_Archive_RegisterChatCommands takes nothing returns nothing
