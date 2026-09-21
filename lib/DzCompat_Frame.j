@@ -163,9 +163,23 @@
         return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_COMMAND_BUTTON, row * 4 + column))
     endfunction
 
-    function DzFrameGetHeroBarButton takes integer buttonId returns integer
-        return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, buttonId))
-    endfunction
+	function DzFrameGetHeroBarButton takes integer buttonId returns integer
+	    local framehandle f = BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, buttonId)
+	    local framehandle consoleUI = null
+	
+	    if f != null then
+	        // Free the button from its locked default anchors
+	        call BlzFrameClearAllPoints(f)
+	        
+	        // Re-anchor it to the stable ConsoleUI frame so it can be moved
+	        set consoleUI = BlzGetFrameByName("ConsoleUI", 0)
+	        if consoleUI != null then
+	            call BlzFrameSetPoint(f, FRAMEPOINT_TOPLEFT, consoleUI, FRAMEPOINT_TOPLEFT, 0.0, 0.0)
+	        endif
+	    endif
+	
+	    return DzCompat_RegisterFrame(f)
+	endfunction
 
     function DzFrameGetHeroHPBar takes integer buttonId returns integer
         return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_HERO_HP_BAR, buttonId))
