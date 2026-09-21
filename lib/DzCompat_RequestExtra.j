@@ -79,6 +79,7 @@ function RequestExtraIntegerDataa takes integer dataType, player whichPlayer, st
             return DzServer_GetInt(whichPlayer, "LOTTERY", 0)
         elseif dataType == 69 then // GameResult_CommitData (write, return value unused by caller)
             call DzServer_Set(whichPlayer, "GAMERESULT_" + param1, param2)
+			return 0
 		elseif dataType == 70 then // GetSinceLastPlayedSeconds
             return 0
         elseif dataType == 78 then // CustomRankCount
