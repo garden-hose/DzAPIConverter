@@ -903,6 +903,32 @@ endglobals
         call TriggerAddAction(trig, funcHandle)
     endfunction
 
+	// ---- mouse cursor position (Reforged 3.0+) --------------------
+	// BlzGetMouseScreenPosX/Y are new in 3.0 and return the mouse's absolute
+	// screen position in pixels - same shape and units as Dz's originals.
+	// There's no separate "relative" native in 3.0 (no second reference point
+	// is exposed), so the *Relative variants use the same call. Do NOT route
+	// them through BlzGetTriggerPlayerMouseX/Y or gDzCompatMouseTrack - those
+	// store world/terrain coordinates (see DzGetMouseTerrainX/Y).
+	// If a map needs a value relative to a frame origin, that has to be done
+	// by the caller (screen pos minus frame screen pos).
+	
+	function DzGetMouseX takes nothing returns integer
+	    return BlzGetMouseScreenPosX()
+	endfunction
+	
+	function DzGetMouseY takes nothing returns integer
+	    return BlzGetMouseScreenPosY()
+	endfunction
+	
+	function DzGetMouseXRelative takes nothing returns integer
+	    return BlzGetMouseScreenPosX()
+	endfunction
+	
+	function DzGetMouseYRelative takes nothing returns integer
+	    return BlzGetMouseScreenPosY()
+	endfunction
+
     // ========================================================================
     // Mouse wheel (limited)
     // ========================================================================
