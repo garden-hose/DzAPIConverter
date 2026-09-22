@@ -285,15 +285,43 @@ endglobals
 
     // ---- effect color, unpacked from Dz's single packed integer ---------
     // Same ARGB packing convention as DzGetColor's BlzConvertColor output
-    // (alpha in the top byte, then red, green, blue) - BlzSetSpecialEffectColor
-    // wants the three color channels as separate integers, so this unpacks
-    // them with plain integer arithmetic (JASS has no bitwise-AND/shift
-    // operators, only +, -, *, / on integers).
+    // (alpha in the top byte, then red, green, blue). BlzSetSpecialEffectColor wants the
+    // three color channels as separate integers and BlzSetSpecialEffectAlpha the alpha, so
+    // the packed value is unpacked with plain integer arithmetic (JASS has no bitwise
+    // operators).
+    //
+    // JASS integers are signed 32-bit. Any color with alpha >= 128 - which is every fully
+    // opaque one (alpha 255) - is a NEGATIVE number, and integer division truncates
+    // towards zero, so the usual "color / 65536" arithmetic gives wrong channels for it.
+    // The value is therefore first moved into the non-negative range by adding 2^31 (which
+    // only clears the top bit; the lower 24 bits, the color channels, are unchanged), and
+    // the alpha's top bit is added back separately.
+    function DzCompat_ColorAlpha takes integer color returns integer
+        if color < 0 then
+            return 128 + (color + 2147483647 + 1) / 16777216
+        endif
+        return color / 16777216
+    endfunction
+
     function DzSetEffectVertexColor takes effect whichEffect, integer color returns nothing
-        local integer red = (color / 65536) - (color / 16777216) * 256
-        local integer green = (color / 256) - (color / 65536) * 256
-        local integer blue = color - (color / 256) * 256
+        local integer rest
+        local integer red
+        local integer green
+        local integer blue
+        if whichEffect == null then
+            return
+        endif
+        if color < 0 then
+            set rest = color + 2147483647 + 1
+        else
+            set rest = color
+        endif
+        set rest = ModuloInteger(rest, 16777216)
+        set red = rest / 65536
+        set green = (rest - red * 65536) / 256
+        set blue = rest - red * 65536 - green * 256
         call BlzSetSpecialEffectColor(whichEffect, red, green, blue)
+        call BlzSetSpecialEffectAlpha(whichEffect, DzCompat_ColorAlpha(color))
     endfunction
 
     // ---- [APPROX] revive unit -------------------------------------------------------
@@ -377,8 +405,10 @@ endglobals
     // ---- generic handle-ID storage - these just wrap the real
     // hashtable primitives (a handle ID is already a plain integer, so there
     // is nothing Dz-specific to reproduce here).
+    // (SaveInteger returns nothing, so it cannot be returned as the boolean result)
     function DzSaveHandleId takes hashtable whichHashtable, integer parentKey, integer childKey, integer handleId returns boolean
-        return SaveInteger(whichHashtable, parentKey, childKey, handleId)
+        call SaveInteger(whichHashtable, parentKey, childKey, handleId)
+        return true
     endfunction
 
     function DzLoadHandleId takes hashtable whichHashtable, integer parentKey, integer childKey returns integer
@@ -390,7 +420,8 @@ endglobals
     // only ever hands back a raw integer, never a typed handle, so knowing
     // what type it "should" be doesn't change how it's stored or retrieved.
     function DzSaveHandleIdEx takes hashtable whichHashtable, integer parentKey, integer childKey, integer handleId, integer handleType returns boolean
-        return SaveInteger(whichHashtable, parentKey, childKey, handleId)
+        call SaveInteger(whichHashtable, parentKey, childKey, handleId)
+        return true
     endfunction
 
     // ============================================================================

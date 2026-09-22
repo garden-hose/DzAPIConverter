@@ -52,9 +52,15 @@ endglobals
     // status: 1 = key down, 0 = key up (status==1 -> keyDown true)
     // sync: when true, register for every player so the event can be used in
     // shared trigger logic; when false, only the local player (UI-local keys).
+    // trig may be null - Dz maps do that when they only want the callback ("call the
+    // function when the key goes down") and have no trigger of their own; a private
+    // trigger is created for it then.
     function DzTriggerRegisterKeyEventByCode takes trigger trig, integer key, integer status, boolean sync, code funcHandle returns nothing
         local integer i = 0
         local boolean keyDown = (status == 1)
+        if trig == null then
+            set trig = CreateTrigger()
+        endif
         if sync then
             loop
                 exitwhen i >= bj_MAX_PLAYER_SLOTS
@@ -100,9 +106,14 @@ endglobals
     // has a code handle; this path is for maps that only ever used the
     // string form.
     function DzTriggerRegisterKeyEvent takes trigger trig, integer key, integer status, boolean sync, string func returns nothing
-        local integer tid = GetHandleId(trig)
-        local integer count = LoadInteger(gDzInputKeyRegCount, tid, 0)
+        local integer tid
+        local integer count
         local integer i = 0
+        if trig == null then
+            set trig = CreateTrigger()
+        endif
+        set tid = GetHandleId(trig)
+        set count = LoadInteger(gDzInputKeyRegCount, tid, 0)
         // Always register for all players so DzGetTriggerKeyPlayer is meaningful
         // (sync is accepted for signature compatibility; Blz key events are
         // already networked).
@@ -772,8 +783,13 @@ endglobals
     // NOTE: common.j warns that mouse events crash if registered during map
     // init — delay until after gameplay starts.
     function DzTriggerRegisterMouseEvent takes trigger trig, integer btn, integer status, boolean sync, string func returns nothing
-        local integer tid = GetHandleId(trig)
-        local integer count = LoadInteger(gDzInputMouseRegCount, tid, 0)
+        local integer tid
+        local integer count
+        if trig == null then
+            set trig = CreateTrigger()
+        endif
+        set tid = GetHandleId(trig)
+        set count = LoadInteger(gDzInputMouseRegCount, tid, 0)
         call DzCompat_EnsureMouseButtonEvents(trig)
         call SaveInteger(gDzInputMouseReg, tid, count * 3, btn)
         call SaveInteger(gDzInputMouseReg, tid, count * 3 + 1, status)
@@ -808,7 +824,7 @@ endglobals
     function DzTriggerRegisterMouseEventByCode takes trigger trig, integer btn, integer status, boolean sync, code funcHandle returns nothing
         local integer eventType
         if trig == null then
-            return
+            set trig = CreateTrigger()
         endif
         if status == 1 then
             set eventType = bj_MOUSEEVENTTYPE_DOWN
@@ -861,8 +877,13 @@ endglobals
     endfunction
 
     function DzTriggerRegisterMouseMoveEvent takes trigger trig, boolean sync, string func returns nothing
-        local integer tid = GetHandleId(trig)
-        local integer count = LoadInteger(gDzInputMouseMoveRegCount, tid, 0)
+        local integer tid
+        local integer count
+        if trig == null then
+            set trig = CreateTrigger()
+        endif
+        set tid = GetHandleId(trig)
+        set count = LoadInteger(gDzInputMouseMoveRegCount, tid, 0)
         call DzCompat_EnsureMouseMoveEvent(trig)
         call SaveStr(gDzInputMouseMoveReg, tid, count, func)
         call SaveInteger(gDzInputMouseMoveRegCount, tid, 0, count + 1)
@@ -875,6 +896,9 @@ endglobals
     // ByCode variant is straightforward: no shared filter needed, each
     // registration is just its own TriggerAddAction.
     function DzTriggerRegisterMouseMoveEventByCode takes trigger trig, boolean sync, code funcHandle returns nothing
+        if trig == null then
+            set trig = CreateTrigger()
+        endif
         call DzCompat_EnsureMouseMoveEvent(trig)
         call TriggerAddAction(trig, funcHandle)
     endfunction
@@ -1102,7 +1126,8 @@ endglobals
     // ========================================================================
 	
 	function MoveDzFrame takes integer frameId, real posX, real posY returns nothing
-		call DzFrameSetAbsolutePoint(frameId, FRAMEPOINT_BOTTOM, posX, posY)
+		// DzFrameSetAbsolutePoint takes the point as an integer: 7 is FRAMEPOINT_BOTTOM
+		call DzFrameSetAbsolutePoint(frameId, 7, posX, posY)
 	endfunction
 
     // Null-safe wrappers used by some maps instead of the full signatures.

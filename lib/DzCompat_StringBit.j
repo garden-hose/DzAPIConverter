@@ -30,37 +30,37 @@
         return BlzBitXor(i, -1)
     endfunction
 
-// [IMPLEMENTED] shifts via arithmetic. JASS integers are 32-bit signed;
-// left shift overflow behavior matches native bitwise shifting for
-// shift amounts 0-31. Negative or >= 32 amounts are defined as no-ops
-// (return the input unchanged) so a bad caller cannot infinite-loop.
-function DzBitShiftLeft takes integer i, integer bitsToShift returns integer
-    local integer result = i
-    local integer n = 0
-    if bitsToShift <= 0 or bitsToShift >= 32 then
-        return i
-    endif
-    loop
-        exitwhen n == bitsToShift
-        set result = result * 2
-        set n = n + 1
-    endloop
-    return result
-endfunction
+	// [IMPLEMENTED] shifts via arithmetic. JASS integers are 32-bit signed;
+	// left shift overflow behavior matches native bitwise shifting for
+	// shift amounts 0-31. Negative or >= 32 amounts are defined as no-ops
+	// (return the input unchanged) so a bad caller cannot infinite-loop.
+	function DzBitShiftLeft takes integer i, integer bitsToShift returns integer
+		local integer result = i
+		local integer n = 0
+		if bitsToShift <= 0 or bitsToShift >= 32 then
+			return i
+		endif
+		loop
+			exitwhen n == bitsToShift
+			set result = result * 2
+			set n = n + 1
+		endloop
+		return result
+	endfunction
 
-function DzBitShiftRight takes integer i, integer bitsToShift returns integer
-    local integer result = i
-    local integer n = 0
-    if bitsToShift <= 0 or bitsToShift >= 32 then
-        return i
-    endif
-    loop
-        exitwhen n == bitsToShift
-        set result = result / 2
-        set n = n + 1
-    endloop
-    return result
-endfunction
+	function DzBitShiftRight takes integer i, integer bitsToShift returns integer
+		local integer result = i
+		local integer n = 0
+		if bitsToShift <= 0 or bitsToShift >= 32 then
+			return i
+		endif
+		loop
+			exitwhen n == bitsToShift
+			set result = result / 2
+			set n = n + 1
+		endloop
+		return result
+	endfunction
 
     // [IMPLEMENTED] byteIndex 0-3, byte 0 = least significant.
     function DzBitGetByte takes integer i, integer byteIndex returns integer
@@ -178,9 +178,9 @@ endfunction
 
     function DzStringFindFirstOf takes string s, string whichString, integer off, boolean caseSensitive returns integer
         local string hay = DzCompat_Fold(s, caseSensitive)
-        local string set_ = DzCompat_Fold(whichString, caseSensitive)
+        local string charSet = DzCompat_Fold(whichString, caseSensitive)
         local integer hayLen = StringLength(hay)
-        local integer setLen = StringLength(set_)
+        local integer setLen = StringLength(charSet)
         local integer i = off
         local integer j
         loop
@@ -188,7 +188,7 @@ endfunction
             set j = 0
             loop
                 exitwhen j == setLen
-                if SubString(hay, i, i + 1) == SubString(set_, j, j + 1) then
+                if SubString(hay, i, i + 1) == SubString(charSet, j, j + 1) then
                     return i
                 endif
                 set j = j + 1
@@ -200,9 +200,9 @@ endfunction
 
     function DzStringFindFirstNotOf takes string s, string whichString, integer off, boolean caseSensitive returns integer
         local string hay = DzCompat_Fold(s, caseSensitive)
-        local string set_ = DzCompat_Fold(whichString, caseSensitive)
+        local string charSet = DzCompat_Fold(whichString, caseSensitive)
         local integer hayLen = StringLength(hay)
-        local integer setLen = StringLength(set_)
+        local integer setLen = StringLength(charSet)
         local integer i = off
         local integer j
         local boolean found
@@ -212,7 +212,7 @@ endfunction
             set j = 0
             loop
                 exitwhen j == setLen
-                if SubString(hay, i, i + 1) == SubString(set_, j, j + 1) then
+                if SubString(hay, i, i + 1) == SubString(charSet, j, j + 1) then
                     set found = true
                 endif
                 set j = j + 1
@@ -227,9 +227,9 @@ endfunction
 
     function DzStringFindLastOf takes string s, string whichString, integer off, boolean caseSensitive returns integer
         local string hay = DzCompat_Fold(s, caseSensitive)
-        local string set_ = DzCompat_Fold(whichString, caseSensitive)
+        local string charSet = DzCompat_Fold(whichString, caseSensitive)
         local integer hayLen = StringLength(hay)
-        local integer setLen = StringLength(set_)
+        local integer setLen = StringLength(charSet)
         local integer i = hayLen - 1
         local integer j
         if off < hayLen - 1 and off >= 0 then
@@ -240,7 +240,7 @@ endfunction
             set j = 0
             loop
                 exitwhen j == setLen
-                if SubString(hay, i, i + 1) == SubString(set_, j, j + 1) then
+                if SubString(hay, i, i + 1) == SubString(charSet, j, j + 1) then
                     return i
                 endif
                 set j = j + 1
@@ -252,9 +252,9 @@ endfunction
 
     function DzStringFindLastNotOf takes string s, string whichString, integer off, boolean caseSensitive returns integer
         local string hay = DzCompat_Fold(s, caseSensitive)
-        local string set_ = DzCompat_Fold(whichString, caseSensitive)
+        local string charSet = DzCompat_Fold(whichString, caseSensitive)
         local integer hayLen = StringLength(hay)
-        local integer setLen = StringLength(set_)
+        local integer setLen = StringLength(charSet)
         local integer i = hayLen - 1
         local integer j
         local boolean found
@@ -267,7 +267,7 @@ endfunction
             set j = 0
             loop
                 exitwhen j == setLen
-                if SubString(hay, i, i + 1) == SubString(set_, j, j + 1) then
+                if SubString(hay, i, i + 1) == SubString(charSet, j, j + 1) then
                     set found = true
                 endif
                 set j = j + 1

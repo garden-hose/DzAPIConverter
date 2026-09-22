@@ -89,6 +89,34 @@ final class ForwardConverter {
             }
         }
 
+        // Names Reforged's common.j already declares: a map that declares them again would not
+        // compile. Runs right after "Clear unused natives" and before anything else.
+        if (settings.fixReforgedNameCollisions) {
+            ReforgedCommonNames commonNames = ReforgedCommonNames.load(libDir);
+            if (commonNames == null) {
+                logger.log("[" + Timestamps.now() + "] WARNING: lib/" + ReforgedCommonNames.FILE_NAME +
+                           " not found - skipping the check for names that Reforged already declares");
+            } else {
+                NameCollisionFixer.Result fixed = NameCollisionFixer.fix(jassScript, commonNames);
+                jassScript = fixed.lines;
+                if (!fixed.changedAnything()) {
+                    logger.log("[" + Timestamps.now() + "] Reforged name check: no declaration collides with common.j");
+                }
+                for (String n : fixed.removedNatives) {
+                    logger.log("[" + Timestamps.now() + "] Reforged name check: removed the declaration of native " + n +
+                               " (Reforged's common.j already provides it)");
+                }
+                if (!fixed.removedGlobals.isEmpty()) {
+                    logger.log("[" + Timestamps.now() + "] Reforged name check: removed " + fixed.removedGlobals.size() +
+                               " unused global(s) that common.j already declares: " + String.join(", ", fixed.removedGlobals));
+                }
+                for (Map.Entry<String, String> e : fixed.renamedGlobals.entrySet()) {
+                    logger.log("[" + Timestamps.now() + "] Reforged name check: renamed used global " + e.getKey() +
+                               " to " + e.getValue() + " (common.j already declares " + e.getKey() + ")");
+                }
+            }
+        }
+
         // RequestExtra*Data rename
         for (String[] pair : ConverterConstants.RENAME_PAIRS) {
             for (int i = 0; i < jassScript.size(); i++) {
@@ -218,6 +246,20 @@ final class ForwardConverter {
             if (neededNames.contains(seg.name)) {
                 orderedImplLines.addAll(seg.lines);
             }
+        }
+
+        // A map may define functions with the names of library functions (its own DzAPI_Map_*
+        // wrappers over RequestExtra*Data, for one). Two functions with one name do not
+        // compile, so the library's copy is renamed and the map's stays as it is.
+        Map<String, String> libRenames = LibFunctionRenamer.renamesFor(
+                neededNames, LibFunctionRenamer.definedFunctions(jassScript));
+        libRenames.keySet().removeIf(n -> !segmentByName.containsKey(n));
+        if (!libRenames.isEmpty()) {
+            LibFunctionRenamer.apply(orderedImplLines, libRenames);
+            logger.log("[" + Timestamps.now() + "] Renamed " + libRenames.size() +
+                       " library function(s) the map also defines itself (the map's own version is untouched; the " +
+                       "compat layer calls the renamed copy, prefix " + LibFunctionRenamer.PREFIX + "): " +
+                       String.join(", ", libRenames.keySet()));
         }
 
         // DzSetUnitModel path -> skin registry (optional unit.ini / UnitStrings).
@@ -351,10 +393,28 @@ final class ForwardConverter {
         if (!unknownNatives.isEmpty()) {
             // De-dupe while preserving order for a cleaner log
             Set<String> seen = new LinkedHashSet<>(unknownNatives);
-            logger.log("[" + Timestamps.now() + "] WARNING: " + seen.size() +
-                       " native(s) had no real implementation and were stubbed:");
+            Map<String, Integer> calls = NativeCallCounter.count(jassScript, seen);
+            List<String> called = new ArrayList<>();
+            List<String> neverCalled = new ArrayList<>();
             for (String n : seen) {
-                logger.log("[" + Timestamps.now() + "] - " + n);
+                if (calls.get(n) > 0) called.add(n); else neverCalled.add(n);
+            }
+            called.sort((a, b) -> calls.get(b) != calls.get(a).intValue()
+                    ? Integer.compare(calls.get(b), calls.get(a)) : a.compareTo(b));
+            logger.log("[" + Timestamps.now() + "] WARNING: " + seen.size() +
+                       " native(s) had no real implementation and were stubbed (they do nothing and return a neutral value):");
+            if (!called.isEmpty()) {
+                logger.log("[" + Timestamps.now() + "]   Called by the map (" + called.size() + ") - these are the ones that matter:");
+                for (String n : called) {
+                    logger.log("[" + Timestamps.now() + "]   - " + n + " (" + calls.get(n) + " call site" +
+                               (calls.get(n) == 1 ? "" : "s") + ")");
+                }
+            }
+            if (!neverCalled.isEmpty()) {
+                logger.log("[" + Timestamps.now() + "]   Declared but never called (" + neverCalled.size() + "):");
+                for (String n : neverCalled) {
+                    logger.log("[" + Timestamps.now() + "]   - " + n);
+                }
             }
         }
     }

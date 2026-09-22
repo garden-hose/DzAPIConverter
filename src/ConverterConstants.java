@@ -13,8 +13,6 @@ final class ConverterConstants {
     // Implemented natives (exact list from the original R script)
     // -------------------------------------------------------------------------
     static final Set<String> IMPLEMENTED_NATIVES = new LinkedHashSet<>(Arrays.asList(
-        // DzCompat_Core.j - misc natives
-        "UnitAlive",
         // DzCompat_Frame.j
         "DzCreateFrame", "DzCreateSimpleFrame", "DzCreateFrameByTagName", "DzDestroyFrame",
         "DzFrameFindByName", "DzSimpleFrameFindByName", "DzGetGameUI", "DzFrameSetPoint",
@@ -141,7 +139,9 @@ final class ConverterConstants {
         "DzAPI_Map_SaveServerValue", "DzAPI_Map_GetServerValue",
         "DzAPI_Map_GetServerValueErrorCode",
         "DzAPI_Map_StoreString", "DzAPI_Map_StoreInteger", "DzAPI_Map_StoreReal", "DzAPI_Map_StoreBoolean",
-        "DzAPI_Map_GetStoredString", "DzAPI_Map_GetStoredInteger", "DzAPI_Map_GetStoredReal", "DzAPI_Map_GetStoredBoolean"
+        "DzAPI_Map_GetStoredString", "DzAPI_Map_GetStoredInteger", "DzAPI_Map_GetStoredReal", "DzAPI_Map_GetStoredBoolean",
+		// DzCompat_Core.j - a native that some environments (YDWE / AI script natives) provide
+        "UnitAlive"
     ));
 
     static final String[] LIB_FILES = {
@@ -150,10 +150,10 @@ final class ConverterConstants {
         "DzCompat_Sync.j",
         "DzCompat_UnitEffect.j",
         "DzCompat_Input.j",
+		"DzCompat_YDWE_EX.j",
         "DzCompat_Ability.j",
         "DzCompat_StringBit.j",
         "DzCompat_Stats.j",
-        "DzCompat_YDWE_EX.j",
 		"DzCompat_Lua.j",
         "DzCompat_Archive.j",
         "DzCompat_Platform.j",

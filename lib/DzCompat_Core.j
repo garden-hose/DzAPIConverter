@@ -13,16 +13,28 @@ globals
     constant integer SILENCE_ABILITY_ID = 'ACsi'
     // model path string -> skin rawcode (DzSetUnitModel registry)
     hashtable gDzCompatModelPathTable = InitHashtable()
+    // Diagnostics are silent by default: a warning is a message for the map author, and players
+    // should not see it in the chat. Set to true in a test build to see them on screen.
+    constant boolean DZCOMPAT_DEBUG_MESSAGES = false
 endglobals
 
-// ---- [REAL, via stock checks] UnitAlive ------------------------------------
-// Platform maps (KK/Dz and many YDWE scripts) declare
-//   native UnitAlive takes unit id returns boolean
-// Replace it with the standard community definition: 
-// a unit is alive when it still has a type
-// id (not removed) and is not flagged UNIT_TYPE_DEAD.
-// Null-safe: GetUnitTypeId(null) is 0, so the combined check returns false for
-// a null handle.
-function UnitAlive takes unit whichUnit returns boolean
-    return GetUnitTypeId(whichUnit) != 0 and not IsUnitType(whichUnit, UNIT_TYPE_DEAD)
+// Shows a diagnostic message to the local player when DZCOMPAT_DEBUG_MESSAGES is true.
+function DzCompat_Warn takes string msg returns nothing
+    if DZCOMPAT_DEBUG_MESSAGES then
+        call DisplayTimedTextToPlayer(GetLocalPlayer(), 0., 0., 20., "|cffffcc00[DzCompat]|r " + msg)
+    endif
+endfunction
+
+// UnitAlive is declared as a native by some map environments (YDWE, AI scripts) but Reforged's
+// common.j does not have it, so a map that declares it needs a real body. "Alive" means the unit
+// exists AND is not dead: null and removed units (type id 0) are not alive, and neither is a
+// corpse. Callers such as damage filters may pass null (an emptied group), so null must be false.
+function UnitAlive takes unit id returns boolean
+    if id == null then
+        return false
+    endif
+    if GetUnitTypeId(id) == 0 then
+        return false
+    endif
+    return not IsUnitType(id, UNIT_TYPE_DEAD)
 endfunction

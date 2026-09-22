@@ -40,10 +40,12 @@
 // ============================================================================
 
     globals
-        // ability handle (from EXGetUnitAbility / EXGetUnitAbilityByIndex) -> the
-        // unit it came from. Needed because EXGetAbilityState/EXSetAbilityState
-        // only get an `ability`, but the real per-unit cooldown natives need the
-        // owning unit too.
+        // ability handle (from EXGetUnitAbility / EXGetUnitAbilityByIndex) ->
+        // owning unit (child 0) and ability rawcode (child 1). Needed because
+        // EXGetAbilityState / EXSetAbilityState only receive an `ability`, while
+        // the real per-unit cooldown natives need (unit, abilcode). Storing the
+        // code alongside the owner avoids relying solely on BlzGetAbilityId,
+        // which is not always reliable on every handle path.
         hashtable gYDWEEXOwner = InitHashtable()
         // catch-all local bookkeeping table for every [PORT LIMITATION] / partial
         // fallback case below (effect rotation/scale accumulators, ability Data
@@ -57,14 +59,26 @@
         // fixed parent with those tables' dynamic GetHandleId()-based parents
         // used elsewhere risks an accidental collision.
         hashtable gYDWEEXItemCache = InitHashtable()
+        // EXEffectMatRotateX/Y/Z: false = each call SETS that axis' angle (stateless); true =
+        // each call ADDS to the angle the effect already has, like the real matrix multiply.
+        // The additive form remembers the angle per effect handle id, and Warcraft reuses
+        // handle ids after an effect is destroyed - a new effect can then inherit the old
+        // one's angle and every rotation drifts a little more. Maps that rotate a fresh
+        // effect once and destroy it (the usual pattern) want false; set true only for a
+        // map that rotates the SAME effect several times around one axis.
+        constant boolean DZCOMPAT_EFFECT_ROTATE_ACCUMULATE = false
     endglobals
 
-    // ---- internal helper: remember which unit an ability handle came from ------
-    function YDWEEX_CacheAbilityOwner takes ability a, unit owner returns nothing
+    // ---- internal helper: remember unit + rawcode for an ability handle --------
+    // Child 0 = owner unit, child 1 = ability rawcode (integer).
+    function YDWEEX_CacheAbility takes ability a, unit owner, integer abilcode returns nothing
+        local integer hid
         if a == null then
             return
         endif
-        call SaveUnitHandle(gYDWEEXOwner, GetHandleId(a), 0, owner)
+        set hid = GetHandleId(a)
+        call SaveUnitHandle(gYDWEEXOwner, hid, 0, owner)
+        call SaveInteger(gYDWEEXOwner, hid, 1, abilcode)
     endfunction
 
     function YDWEEX_GetAbilityOwner takes ability a returns unit
@@ -75,6 +89,25 @@
             return null
         endif
         return LoadUnitHandle(gYDWEEXOwner, GetHandleId(a), 0)
+    endfunction
+
+    // Prefer the cached rawcode written by YDWEEX_CacheAbility; fall back to
+    // BlzGetAbilityId when the handle was never registered (e.g. obtained some
+    // other way). Returns 0 when both paths fail.
+    function YDWEEX_GetAbilityCode takes ability a returns integer
+        local integer hid
+        local integer cachedAbil
+        if a == null then
+            return 0
+        endif
+        set hid = GetHandleId(a)
+        if HaveSavedInteger(gYDWEEXOwner, hid, 1) then
+            set cachedAbil = LoadInteger(gYDWEEXOwner, hid, 1)
+            if cachedAbil != 0 then
+                return cachedAbil
+            endif
+        endif
+        return BlzGetAbilityId(a)
     endfunction
 
     // ---- internal helper: ability string data, shared by the by-handle and ----
@@ -158,33 +191,38 @@
     // ---- [REAL] --------------------------------------------------------------
     function EXGetUnitAbility takes unit u, integer abilcode returns ability
         local ability a = BlzGetUnitAbility(u, abilcode)
-        call YDWEEX_CacheAbilityOwner(a, u)
+        call YDWEEX_CacheAbility(a, u, abilcode)
         return a
     endfunction
 
     function EXGetUnitAbilityByIndex takes unit u, integer index returns ability
         local ability a = BlzGetUnitAbilityByIndex(u, index)
-        call YDWEEX_CacheAbilityOwner(a, u)
+        // Index path does not receive the rawcode up front; read it back once
+        // and store both owner + code so later cooldown/data calls stay stable.
+        if a != null then
+            call YDWEEX_CacheAbility(a, u, BlzGetAbilityId(a))
+        endif
         return a
     endfunction
 
     function EXGetAbilityId takes ability abil returns integer
-        return BlzGetAbilityId(abil)
+        return YDWEEX_GetAbilityCode(abil)
     endfunction
 
     // ============================================================================
     // Ability state (cooldown)
     // ============================================================================
 
-    // ---- [REAL, via owner cache] ----------------------------------------------
+    // ---- [REAL, via owner + code cache] ----------------------------------------
     // BlzGetUnitAbilityCooldownRemaining/BlzStartUnitAbilityCooldown/
     // BlzEndUnitAbilityCooldown need (unit, abilcode), not an `ability` handle -
-    // the owner cache above bridges that gap. Only works for abilities that were
+    // the cache above bridges that gap. Only works for abilities that were
     // actually obtained through EXGetUnitAbility/EXGetUnitAbilityByIndex in this
     // same game session (matches the reference doc's own warning that these
     // handles are internal pool references, not portable across long gaps).
     function EXGetAbilityState takes ability abil, integer state_type returns real
         local unit owner
+        local integer abilcode
         if state_type != 1 then //ABILITY_STATE_COOLDOWN
             return 0.00
         endif
@@ -192,7 +230,11 @@
         if owner == null then
             return 0.00
         endif
-        return BlzGetUnitAbilityCooldownRemaining(owner, BlzGetAbilityId(abil))
+        set abilcode = YDWEEX_GetAbilityCode(abil)
+        if abilcode == 0 then
+            return 0.00
+        endif
+        return BlzGetUnitAbilityCooldownRemaining(owner, abilcode)
     endfunction
 
     function EXSetAbilityState takes ability abil, integer state_type, real value returns boolean
@@ -205,7 +247,10 @@
         if owner == null then
             return false
         endif
-        set abilcode = BlzGetAbilityId(abil)
+        set abilcode = YDWEEX_GetAbilityCode(abil)
+        if abilcode == 0 then
+            return false
+        endif
         if value <= 0.00 then
             call BlzEndUnitAbilityCooldown(owner, abilcode)
         else
@@ -287,11 +332,11 @@
 
     // ---- see YDWEEX_Get/SetAbilityStringByCode above for status per field -----
     function EXGetAbilityDataString takes ability abil, integer level, integer data_type returns string
-        return YDWEEX_GetAbilityStringByCode(BlzGetAbilityId(abil), level, data_type)
+        return YDWEEX_GetAbilityStringByCode(YDWEEX_GetAbilityCode(abil), level, data_type)
     endfunction
 
     function EXSetAbilityDataString takes ability abil, integer level, integer data_type, string value returns boolean
-        return YDWEEX_SetAbilityStringByCode(BlzGetAbilityId(abil), level, data_type, value)
+        return YDWEEX_SetAbilityStringByCode(YDWEEX_GetAbilityCode(abil), level, data_type, value)
     endfunction
 
     // ============================================================================
@@ -396,38 +441,52 @@
         call SaveReal(gYDWEEXLocal, GetHandleId(e), 900001, size)
     endfunction
 
-    // ---- [REAL, via accumulator] Blz's Yaw/Pitch/Roll setters are absolute, but
-    // EX's Mat* rotations are documented as cumulative (matrix multiply) - an
-    // accumulator per effect reproduces that. Axis mapping (Z=yaw, X=pitch,
-    // Y=roll) is taken directly from YDWE_EX_Natives.j's own EXEffectSetOrientation
-    // wrapper, not guessed.
+    // ---- [REAL] Blz's Yaw/Pitch/Roll setters are absolute, while EX's Mat* rotations are
+    // documented as cumulative (matrix multiply). By default each call here sets its axis'
+    // angle; DZCOMPAT_EFFECT_ROTATE_ACCUMULATE (see the globals at the top of this file)
+    // switches to a per-effect accumulator that reproduces the cumulative behavior - at the
+    // cost of inheriting stale angles when Warcraft reuses a destroyed effect's handle id.
+    // Axis mapping (Z=yaw, X=pitch, Y=roll) is taken directly from YDWE_EX_Natives.j's own
+    // EXEffectSetOrientation wrapper, not guessed. The angle is treated as degrees.
     function EXEffectMatRotateX takes effect e, real angle returns nothing
-        local real cur = 0.00
-        if HaveSavedReal(gYDWEEXLocal, GetHandleId(e), 900002) then
-            set cur = LoadReal(gYDWEEXLocal, GetHandleId(e), 900002)
+        local real cur = angle
+        if e == null then
+            return
         endif
-        set cur = cur + angle
-        call SaveReal(gYDWEEXLocal, GetHandleId(e), 900002, cur)
+        if DZCOMPAT_EFFECT_ROTATE_ACCUMULATE then
+            if HaveSavedReal(gYDWEEXLocal, GetHandleId(e), 900002) then
+                set cur = LoadReal(gYDWEEXLocal, GetHandleId(e), 900002) + angle
+            endif
+            call SaveReal(gYDWEEXLocal, GetHandleId(e), 900002, cur)
+        endif
         call BlzSetSpecialEffectPitch(e, cur * bj_DEGTORAD)
     endfunction
 
     function EXEffectMatRotateY takes effect e, real angle returns nothing
-        local real cur = 0.00
-        if HaveSavedReal(gYDWEEXLocal, GetHandleId(e), 900003) then
-            set cur = LoadReal(gYDWEEXLocal, GetHandleId(e), 900003)
+        local real cur = angle
+        if e == null then
+            return
         endif
-        set cur = cur + angle
-        call SaveReal(gYDWEEXLocal, GetHandleId(e), 900003, cur)
+        if DZCOMPAT_EFFECT_ROTATE_ACCUMULATE then
+            if HaveSavedReal(gYDWEEXLocal, GetHandleId(e), 900003) then
+                set cur = LoadReal(gYDWEEXLocal, GetHandleId(e), 900003) + angle
+            endif
+            call SaveReal(gYDWEEXLocal, GetHandleId(e), 900003, cur)
+        endif
         call BlzSetSpecialEffectRoll(e, cur * bj_DEGTORAD)
     endfunction
 
     function EXEffectMatRotateZ takes effect e, real angle returns nothing
-        local real cur = 0.00
-        if HaveSavedReal(gYDWEEXLocal, GetHandleId(e), 900004) then
-            set cur = LoadReal(gYDWEEXLocal, GetHandleId(e), 900004)
+        local real cur = angle
+        if e == null then
+            return
         endif
-        set cur = cur + angle
-        call SaveReal(gYDWEEXLocal, GetHandleId(e), 900004, cur)
+        if DZCOMPAT_EFFECT_ROTATE_ACCUMULATE then
+            if HaveSavedReal(gYDWEEXLocal, GetHandleId(e), 900004) then
+                set cur = LoadReal(gYDWEEXLocal, GetHandleId(e), 900004) + angle
+            endif
+            call SaveReal(gYDWEEXLocal, GetHandleId(e), 900004, cur)
+        endif
         call BlzSetSpecialEffectYaw(e, cur * bj_DEGTORAD)
     endfunction
 
@@ -662,37 +721,33 @@
 
     // ---- [REAL] IS_ATTACK/DAMAGE_TYPE/WEAPON_TYPE/ATTACK_TYPE all use genuine
     // Reforged natives (BlzGetEventIsAttack/DamageType/WeaponType/AttackType -
-    // verified against jassdoc's common.j). Only valid inside
-    // EVENT_UNIT_DAMAGED / EVENT_PLAYER_UNIT_DAMAGED, same as the original EX
-    // native.
-    // [APPROX] PHYSICAL: maps DAMAGE_TYPE_NORMAL (engine id 4) to "physical",
-    // matching the common JAPI / port convention that treats the stock attack
-    // damage type as physical and everything else as spell/special. This is
-    // more faithful than reusing BlzGetEventIsAttack (which answers a different
-    // question and collapsed PHYSICAL into IS_ATTACK).
-    // [APPROX] VALID: Reforged has no "is a damage event currently on the
-    // stack" flag. Returning 1 matches the working assumption of every caller
-    // (they only invoke this inside a damage handler) and the behaviour of
-    // this native.
-    // [APPROX] IS_RANGED: Reforged does not expose the event's ranged flag.
-    // Approximate as "this is an attack AND the source unit is typed as a
-    // ranged attacker". Wrong for melee units dealing triggered ranged-style
-    // damage and for ranged units dealing pure spell damage, but it is the
-    // best signal available without map-specific knowledge.
+    // Only valid inside EVENT_UNIT_DAMAGED/EVENT_PLAYER_UNIT_DAMAGED,
+    // same as the original EX native.
+    // [APPROX] PHYSICAL: common.j's own docs note that neither attacktype nor
+    // damagetype reliably distinguishes a physical attack from spell damage
+    // (both commonly default to their "_NORMAL" constant either way) -
+    // BlzGetEventIsAttack is the one native actually designed to answer this,
+    // so it's reused here too, matching common community convention.
+    // [PORT LIMITATION] VALID/IS_RANGED: no confirmed native exposes either of
+    // these - VALID has no "was this actually inside a damage event" flag to
+    // check, and IS_RANGED has no reliable signal (weapontype is documented as
+    // sound-only, not a melee/ranged indicator).
     function EXGetEventDamageData takes integer edd_type returns integer
         if edd_type == 0 then //EVENT_DAMAGE_DATA_VAILD
+            // "damage data is available". A Reforged damage event always has its data, and
+            // nothing else can say whether the caller is inside one, so this is always 1.
             return 1
-        elseif edd_type == 1 then //EVENT_DAMAGE_DATA_PHYSICAL
-            if BlzGetEventDamageType() == DAMAGE_TYPE_NORMAL then
-                return 1
-            endif
-            return 0
         elseif edd_type == 2 then //EVENT_DAMAGE_DATA_IS_ATTACK
             if BlzGetEventIsAttack() then
                 return 1
             endif
             return 0
-        elseif edd_type == 3 then //EVENT_DAMAGE_DATA_IS_RANGED
+        elseif edd_type == 1 then //EVENT_DAMAGE_DATA_PHYSICAL
+            if BlzGetEventIsAttack() then
+                return 1
+            endif
+            return 0
+		elseif edd_type == 3 then //EVENT_DAMAGE_DATA_IS_RANGED
             if BlzGetEventIsAttack() and IsUnitType(GetEventDamageSource(), UNIT_TYPE_RANGED_ATTACKER) then
                 return 1
             endif
@@ -802,17 +857,13 @@
     // Chat native
     // ============================================================================
 
-    // ---- [APPROX] Manually-prefixed timed text player message simulation shown
-    // to every currently-playing player; this is NOT routed through real chat/ally/
-    // observer filtering, so chat_recipient's original meaning is not honored.
+    // Shows the message in the chat as if player p had sent it (BlzDisplayChatMessage).
+    // chat_recipient selects the chat prefix: 0 "All", 1 "Allies", 2 "Observers", 3 or more
+    // "Private" - it has no effect on who sees the message; like the real native, it appears
+    // on every client that runs this call.
     function EXDisplayChat takes player p, integer chat_recipient, string message returns nothing
-        local string line = "|cffffcc00" + GetPlayerName(p) + ":|r " + message
-        local integer i = 0
-        loop
-            exitwhen i >= bj_MAX_PLAYERS
-            if GetPlayerSlotState(Player(i)) == PLAYER_SLOT_STATE_PLAYING then
-                call DisplayTimedTextToPlayer(Player(i), 0, 0, 10.00, line)
-            endif
-            set i = i + 1
-        endloop
+        if p == null or message == null then
+            return
+        endif
+        call BlzDisplayChatMessage(p, chat_recipient, message)
     endfunction
