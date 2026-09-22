@@ -25,6 +25,21 @@ function DzCompat_Warn takes string msg returns nothing
     endif
 endfunction
 
+// Identity type-cast helpers
+// Some maps call these (frame/handle “casts”). They are no-ops on Reforged but prevent missing-native errors.
+function DzF2I takes integer i returns integer
+    return i
+endfunction
+function DzI2F takes integer i returns integer
+    return i
+endfunction
+function DzK2I takes integer i returns integer
+    return i
+endfunction
+function DzI2K takes integer i returns integer
+    return i
+endfunction
+
 // UnitAlive is declared as a native by some map environments (YDWE, AI scripts) but Reforged's
 // common.j does not have it, so a map that declares it needs a real body. "Alive" means the unit
 // exists AND is not dead: null and removed units (type id 0) are not alive, and neither is a
