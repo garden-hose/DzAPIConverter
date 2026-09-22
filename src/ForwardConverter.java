@@ -84,9 +84,9 @@ final class ForwardConverter {
             jassScript = cleared.lines;
             logger.log("[" + Timestamps.now() + "] Clear unused natives: removed " + cleared.removedNames.size() +
                        " of " + cleared.dzNativeCount + " declared dz native(s) that are never used");
-            for (String n : cleared.removedNames) {
-                logger.log("[" + Timestamps.now() + "] - " + n);
-            }
+            //for (String n : cleared.removedNames) {
+            //    logger.log("[" + Timestamps.now() + "] - " + n);
+            //}
         }
 
         // Names Reforged's common.j already declares: a map that declares them again would not
@@ -179,6 +179,8 @@ final class ForwardConverter {
         }
         logger.log("[" + Timestamps.now() + "] Found " + realCount +
                    " native declarations with real Reforged-compatible implementations");
+
+		logger.log("[Converter is processing. Don't close...]");
 
         // EXExecuteScript: bake the jass.slk object data the script reads. Done before
         // the dependency closure because the generated code calls DzCompat_SlkDeclare /
