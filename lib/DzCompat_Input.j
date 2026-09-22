@@ -14,7 +14,7 @@
 //                 DzGetTriggerKeyPlayer (built on real Blz* / EVENT_PLAYER_MOUSE_*)
 //   [APPROX]    DzSetUnitModel via BlzSetUnitSkin (string -> skin/rawcode id)
 //   [APPROX]    DzFrameSetUpdateCallbackByCode (30 Hz timer)
-//   [LIMITED]   DzGetWheelDelta / DzTriggerRegisterMouseWheelEvent* /
+//   [PORT LIMITATION]   DzGetWheelDelta / DzTriggerRegisterMouseWheelEvent* /
 //               DzGetMouseFocus (no full engine equivalent)
 //   [HELPER]    DzTriggerRegister*Trg 
 // ============================================================================
@@ -906,7 +906,7 @@ endglobals
         call DzCompat_EnsureMouseMoveEvent(trig)
         call TriggerAddAction(trig, funcHandle)
     endfunction
-
+	
 	// ---- mouse cursor position (Reforged 3.0+) --------------------
 	// BlzGetMouseScreenPosX/Y are new in 3.0 and return the mouse's absolute
 	// screen position in pixels - same shape and units as Dz's originals.
@@ -916,21 +916,21 @@ endglobals
 	// store world/terrain coordinates (see DzGetMouseTerrainX/Y).
 	// If a map needs a value relative to a frame origin, that has to be done
 	// by the caller (screen pos minus frame screen pos).
-	
+
 	function DzGetMouseX takes nothing returns integer
-	    return BlzGetMouseScreenPosX()
+		return BlzGetMouseScreenPosX()
 	endfunction
-	
+
 	function DzGetMouseY takes nothing returns integer
-	    return BlzGetMouseScreenPosY()
+		return BlzGetMouseScreenPosY()
 	endfunction
-	
+
 	function DzGetMouseXRelative takes nothing returns integer
-	    return BlzGetMouseScreenPosX()
+		return BlzGetMouseScreenPosX()
 	endfunction
-	
+
 	function DzGetMouseYRelative takes nothing returns integer
-	    return BlzGetMouseScreenPosY()
+		return BlzGetMouseScreenPosY()
 	endfunction
 
     // ========================================================================
@@ -938,7 +938,7 @@ endglobals
     // ========================================================================
 
 
-    // [LIMITED] No portable mouse-wheel event registration in stock Reforged
+    // [PORT LIMITATION] No portable mouse-wheel event registration in stock Reforged
     // that matches Dz's signature. Kept as a defined no-op so maps compile.
     function DzTriggerRegisterMouseWheelEventByCode takes trigger whichTrigger, boolean sync, code funcHandle returns nothing
     endfunction
@@ -946,7 +946,7 @@ endglobals
     function DzTriggerRegisterMouseWheelEvent takes trigger whichTrigger, boolean sync, string funcName returns nothing
     endfunction
 
-    // [LIMITED] Wheel delta is only valid inside a real wheel event; without
+    // [PORT LIMITATION] Wheel delta is only valid inside a real wheel event; without
     // registration support this always returns 0.
     function DzGetWheelDelta takes nothing returns integer
         return 0
@@ -1157,6 +1157,7 @@ endglobals
 	
 	function MoveDzFrame takes integer frameId, real posX, real posY returns nothing
 		// DzFrameSetAbsolutePoint takes the point as an integer: 7 is FRAMEPOINT_BOTTOM
+		// Function DzFrameSetAbsolutePoint lives in DzCompat_Frame.j
 		call DzFrameSetAbsolutePoint(frameId, 7, posX, posY)
 	endfunction
 
@@ -1174,3 +1175,31 @@ endglobals
         endif
         call DzTriggerRegisterMouseWheelEvent(whichTrigger, true, null)
     endfunction
+	
+	function DzTriggerRegisterMouseEventTrg takes trigger whichTrigger, integer status, integer btn returns nothing
+        local integer eventType
+        if whichTrigger == null then
+            return
+        endif
+        if status == 1 then
+            set eventType = bj_MOUSEEVENTTYPE_DOWN
+        else
+            set eventType = bj_MOUSEEVENTTYPE_UP
+        endif
+        // Local player only (same as ByCode). Map owns TriggerAddAction.
+        call TriggerRegisterPlayerMouseEventBJ(whichTrigger, GetLocalPlayer(), eventType)
+        if btn == 1 or btn == 0x1 then
+            call TriggerAddCondition(whichTrigger, Condition(function DzCompat_MouseLMBCondition))
+        else
+            call TriggerAddCondition(whichTrigger, Condition(function DzCompat_MouseRMBCondition))
+        endif
+    endfunction
+	
+	function DzTriggerRegisterMouseMoveEventTrg takes trigger whichTrigger returns nothing
+        if whichTrigger == null then
+            return
+        endif
+        // Registers EVENT_PLAYER_MOUSE_MOVE for all slots; no dispatcher action.
+        call DzCompat_EnsureMouseMoveEvent(whichTrigger)
+    endfunction
+	
