@@ -156,15 +156,21 @@ final class ForwardConverter {
         // files) the whole EXExecuteScript process is skipped: no real implementation is
         // emitted, nothing is baked, and the native falls through to a dummy stub below.
         // Decided before the dependency closure so none of its helpers get pulled in.
+        //
+        // EXGetAbilityDataInteger's Hotkey/Researchhotkey lookup (types 200/202, baked from
+        // the same folder's ability.ini by AbilityHotkeyRegistry) needs the same folder, so
+        // the table-folder prompt is shared between the two rather than asked twice.
+        boolean needsHotkeyTable = neededNames.contains("EXGetAbilityDataInteger") &&
+                                    AbilityHotkeyRegistry.scriptMayNeedHotkeys(jassScript);
         Path slkTableDir = null;
-        if (neededNames.contains("EXExecuteScript")) {
+        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable) {
             slkTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
-            if (slkTableDir == null) {
-                neededNames.remove("EXExecuteScript");
-                realCount--;
-                logger.log("[" + Timestamps.now() + "] EXExecuteScript: skipped - no map table files to work from " +
-                           "(the native is stubbed instead)");
-            }
+        }
+        if (neededNames.contains("EXExecuteScript") && slkTableDir == null) {
+            neededNames.remove("EXExecuteScript");
+            realCount--;
+            logger.log("[" + Timestamps.now() + "] EXExecuteScript: skipped - no map table files to work from " +
+                       "(the native is stubbed instead)");
         }
         logger.log("[" + Timestamps.now() + "] Found " + realCount +
                    " native declarations with real Reforged-compatible implementations");
@@ -174,11 +180,25 @@ final class ForwardConverter {
         // DzCompat_SlkPut, which nothing in the library refers to, so they have to be
         // requested explicitly.
         List<String> slkLines = Collections.emptyList();
-        if (slkTableDir != null) {
+        if (slkTableDir != null && neededNames.contains("EXExecuteScript")) {
             slkLines = SlkTableRegistry.buildRegistry(jassScript, slkTableDir, inputCharset, logger);
             if (!slkLines.isEmpty()) {
                 neededNames.add("DzCompat_SlkDeclare");
                 neededNames.add("DzCompat_SlkPut");
+            }
+        }
+
+        // EXGetAbilityDataInteger types 200/202: bake Hotkey/Researchhotkey from ability.ini.
+        // Same reasoning as the jass.slk bake above - the generated code calls
+        // DzCompat_HotkeyPut, which nothing in the library refers to on its own, so it has
+        // to be requested explicitly. DzCompat_HotkeyGet needs no such request: it is called
+        // directly from EXGetAbilityDataInteger's own body, so the normal dependency closure
+        // picks it up once EXGetAbilityDataInteger itself is needed.
+        List<String> hotkeyLines = Collections.emptyList();
+        if (slkTableDir != null && needsHotkeyTable) {
+            hotkeyLines = AbilityHotkeyRegistry.buildRegistry(slkTableDir, logger);
+            if (!hotkeyLines.isEmpty()) {
+                neededNames.add("DzCompat_HotkeyPut");
             }
         }
 
@@ -314,6 +334,12 @@ final class ForwardConverter {
                     finalOutput.add("");
                     finalOutput.addAll(slkLines);
                 }
+                // Same reasoning for the baked ability Hotkey/Researchhotkey data
+                // (calls DzCompat_HotkeyPut).
+                if (!hotkeyLines.isEmpty()) {
+                    finalOutput.add("");
+                    finalOutput.addAll(hotkeyLines);
+                }
                 continue;
             }
 
@@ -364,6 +390,18 @@ final class ForwardConverter {
             } else {
                 logger.log("[" + Timestamps.now() + "] WARNING: function main not found - call " +
                            "ExecuteFunc(\"" + SlkTableRegistry.INIT_FUNCTION + "\") once at map init yourself");
+            }
+        }
+
+        // Same for the baked ability Hotkey/Researchhotkey data.
+        if (!hotkeyLines.isEmpty()) {
+            if (JassScript.injectStatementIntoMain(finalOutput,
+                    "call ExecuteFunc(\"" + AbilityHotkeyRegistry.INIT_FUNCTION + "\")")) {
+                logger.log("[" + Timestamps.now() + "] Injected " + hotkeyLines.size() +
+                           " lines for the ability Hotkey/Researchhotkey data");
+            } else {
+                logger.log("[" + Timestamps.now() + "] WARNING: function main not found - call " +
+                           "ExecuteFunc(\"" + AbilityHotkeyRegistry.INIT_FUNCTION + "\") once at map init yourself");
             }
         }
 

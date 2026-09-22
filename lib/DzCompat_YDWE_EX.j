@@ -53,6 +53,11 @@
         // key schemes are chosen per-feature and are documented at each use site;
         // they don't need to be globally unique, just unique enough in practice.
         hashtable gYDWEEXLocal = InitHashtable()
+        // Ability Hotkey (child 0) / Researchhotkey (child 1) by ability rawcode, baked at
+        // conversion time from table\ability.ini - see AbilityHotkeyRegistry.java and
+        // EXGetAbilityDataInteger's data_type 200/202 below. Empty (all lookups return 0)
+        // when the map does not read either field, or when no ability.ini was supplied.
+        hashtable gYDWEEXHotkey = InitHashtable()
         // persistent per-itemcode work-item cache (see YDWEEX_GetCachedWorkItem)
         // - kept separate from gYDWEEXOwner/gYDWEEXLocal because it deliberately
         // uses a fixed parent key with itemcode as the child key, and mixing a
@@ -307,6 +312,22 @@
     endfunction
 
     // ---- [REAL] COST (mana cost). [PORT LIMITATION] TARGS/UNITID -----------------
+    // ---- Hotkey / Researchhotkey lookup (which: 0 = Hotkey, 1 = Researchhotkey) --------
+    // Populated by AbilityHotkeyRegistry's generated DzCompat_InitHotkey; called from
+    // EXGetAbilityDataInteger below. An ability with no entry (never customized in
+    // ability.ini, or no table supplied) returns 0 - see the class comment in
+    // AbilityHotkeyRegistry.java for why that gap can exist.
+    function DzCompat_HotkeyPut takes integer abilcode, integer which, integer asciiCode returns nothing
+        call SaveInteger(gYDWEEXHotkey, abilcode, which, asciiCode)
+    endfunction
+
+    function DzCompat_HotkeyGet takes integer abilcode, integer which returns integer
+        if abilcode == 0 then
+            return 0
+        endif
+        return LoadInteger(gYDWEEXHotkey, abilcode, which)
+    endfunction
+
     function EXGetAbilityDataInteger takes ability abil, integer level, integer data_type returns integer
         local integer idx = level - 1
         if idx < 0 then
@@ -314,6 +335,10 @@
         endif
         if data_type == 104 then //ABILITY_DATA_COST
             return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_MANA_COST, idx)
+        elseif data_type == 200 then //ABILITY_DATA_HOTKET - not leveled; baked from ability.ini
+            return DzCompat_HotkeyGet(YDWEEX_GetAbilityCode(abil), 0)
+        elseif data_type == 202 then //ABILITY_DATA_RESEARCH_HOTKEY - not leveled; baked from ability.ini
+            return DzCompat_HotkeyGet(YDWEEX_GetAbilityCode(abil), 1)
         endif
         return LoadInteger(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level)
     endfunction
