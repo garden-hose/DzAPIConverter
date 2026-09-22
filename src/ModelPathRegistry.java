@@ -157,11 +157,23 @@ final class ModelPathRegistry {
     
 
     /**
-     * After conversion: if DzSetUnitModel is present, optionally load unit.ini /
-     * UnitStrings (via {@code prompt}; null in CLI mode) and emit
-     * DzCompat_RegisterModelPath calls wrapped in DzCompat_InitModelPaths.
+     * After conversion: if DzSetUnitModel is present, resolve model paths to skin ids
+     * and emit DzCompat_RegisterModelPath calls wrapped in DzCompat_InitModelPaths.
+     *
+     * @param tableModelPaths model path -> unit rawcode, from
+     *                        {@link SlkTableRegistry#buildUnitModelPathIndex} (the umdl
+     *                        field of this map's own unit table). Every rawcode it
+     *                        gives is a real unit type this map already has, so it is
+     *                        always a valid BlzSetUnitSkin skinId; checked first. May be
+     *                        empty (no table folder, no unit.ini, no umdl matches) -
+     *                        never null.
+     * @param prompt          optionally loads a unit.ini / UnitStrings catalog (null in
+     *                        CLI mode) as a fallback for paths that belong to no unit
+     *                        type in the map's own data (e.g. an official alt-skin the
+     *                        map only ever names by string).
      */
-    static List<String> buildRegistry(List<String> jassScript, UnitFilePrompt prompt, Logger logger) {
+    static List<String> buildRegistry(List<String> jassScript, UnitFilePrompt prompt,
+                                       Map<String, String> tableModelPaths, Logger logger) {
         LinkedHashSet<String> scriptPaths = extractDzSetUnitModelPaths(jassScript);
         logger.log("[" + Timestamps.now() + "] DzSetUnitModel detected; found " +
                    scriptPaths.size() + " model path literal(s) in script");
@@ -169,7 +181,7 @@ final class ModelPathRegistry {
         Path unitDataFile = null;
         if (prompt != null) {
             unitDataFile = prompt.requestUnitDataFile();
-        } else {
+        } else if (tableModelPaths.isEmpty()) {
             logger.log("[" + Timestamps.now() + "] CLI mode: writing empty skin ids for DzSetUnitModel paths");
         }
 
@@ -183,12 +195,24 @@ final class ModelPathRegistry {
             }
         }
 
-        // Only paths that are actually passed to DzSetUnitModel are registered.
-        // The unit file is used purely as a lookup table for their skin ids;
-        // its other model paths are ignored.
+        // Only paths that are actually passed to DzSetUnitModel are registered; every
+        // other model path in either source is ignored. The map's own object data
+        // (tableModelPaths, already keyed by modelPathKey) is checked first - it is
+        // always a valid skin id, since its rawcode is a unit type this map already
+        // has. The unit.ini / UnitStrings catalog fills in whatever is left.
         Map<String, String> skinByKey = new HashMap<>();
+        int fromTable = 0;
+        for (Map.Entry<String, String> e : tableModelPaths.entrySet()) {
+            if (skinByKey.putIfAbsent(e.getKey(), e.getValue()) == null) fromTable++;
+        }
+        int fromCatalog = 0;
         for (Map.Entry<String, String> e : pathToSkin.entrySet()) {
-            skinByKey.putIfAbsent(modelPathKey(e.getKey()), e.getValue());
+            if (skinByKey.putIfAbsent(modelPathKey(e.getKey()), e.getValue()) == null) fromCatalog++;
+        }
+        if (fromTable > 0 || fromCatalog > 0) {
+            logger.log("[" + Timestamps.now() + "] Model path -> skin id: " + fromTable +
+                       " resolved from this map's own object data (umdl)" +
+                       (fromCatalog > 0 ? ", " + fromCatalog + " from " + unitDataFile.getFileName() : ""));
         }
         LinkedHashSet<String> pathsToRegister = new LinkedHashSet<>(scriptPaths);
 

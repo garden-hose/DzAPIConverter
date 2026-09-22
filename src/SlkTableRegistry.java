@@ -283,6 +283,48 @@ final class SlkTableRegistry {
         return out;
     }
 
+    /**
+     * DzSetUnitModel bridge: model path -> the rawcode of the unit type that carries it,
+     * read from the umdl field of this map's own unit table (unit.ini; see ModelPathRegistry).
+     *
+     * BlzSetUnitSkin only accepts a unit-type rawcode that actually exists in the map's
+     * object data, so a rawcode returned here is always valid - unlike a match against a
+     * generic external unit.ini/UnitStrings catalog, which can name a unit type the map
+     * never placed, or miss one the map defines itself (a custom hero, say). Runtime
+     * lookup is not an option: BlzGetUnitStringField/BlzSetUnitStringField do not support
+     * umdl, so this has to be a conversion-time read of the exported table, same as the
+     * jass.slk bake above.
+     *
+     * @param tableDir a folder accepted by {@link #resolveTableFolder}, or null
+     * @return modelPathKey(path) -> rawcode; empty (never null) when tableDir is null,
+     *         unit.ini is missing, or it has no umdl values
+     */
+    static Map<String, String> buildUnitModelPathIndex(Path tableDir, Logger logger) {
+        Map<String, String> pathToRawcode = new LinkedHashMap<>();
+        if (tableDir == null) {
+            return pathToRawcode;
+        }
+        Path file = listIniFiles(tableDir, logger).get("unit.ini");
+        if (file == null) {
+            return pathToRawcode;
+        }
+        TableData data;
+        try {
+            data = readTable(readIni(file, logger), Collections.singleton("umdl"));
+        } catch (IOException e) {
+            log(logger, "ERROR reading " + file + ": " + e.getMessage());
+            return pathToRawcode;
+        }
+        for (Map.Entry<String, Map<String, String>> row : data.rows.entrySet()) {
+            String path = row.getValue().get("umdl");
+            if (path == null || path.isEmpty()) continue;
+            pathToRawcode.putIfAbsent(ModelPathRegistry.modelPathKey(path), row.getKey());
+        }
+        log(logger, "DzSetUnitModel: " + pathToRawcode.size() + " model path(s) resolved from " +
+                    file.getFileName() + " (umdl field of this map's own unit data)");
+        return pathToRawcode;
+    }
+
     // ------------------------------------------------------------------
     // Table folder / ini reading
     // ------------------------------------------------------------------

@@ -162,8 +162,13 @@ final class ForwardConverter {
         // the table-folder prompt is shared between the two rather than asked twice.
         boolean needsHotkeyTable = neededNames.contains("EXGetAbilityDataInteger") &&
                                     AbilityHotkeyRegistry.scriptMayNeedHotkeys(jassScript);
+        // DzSetUnitModel also draws on this folder (umdl field of unit.ini, see
+        // SlkTableRegistry.buildUnitModelPathIndex), so it shares the prompt too
+        // instead of asking for the table folder a second time.
+        boolean needsUnitModelTable = neededNames.contains("DzSetUnitModel") ||
+                                       ModelPathRegistry.scriptUsesDzSetUnitModel(jassScript);
         Path slkTableDir = null;
-        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable) {
+        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable || needsUnitModelTable) {
             slkTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
         }
         if (neededNames.contains("EXExecuteScript") && slkTableDir == null) {
@@ -282,13 +287,15 @@ final class ForwardConverter {
                        String.join(", ", libRenames.keySet()));
         }
 
-        // DzSetUnitModel path -> skin registry (optional unit.ini / UnitStrings).
-        // Built up front so DzCompat_InitModelPaths can be written near the top
-        // of the file (right after the compat implementations that follow
-        // endglobals) instead of at the bottom.
+        // DzSetUnitModel path -> skin registry: the map's own object data (umdl field
+        // of the unit table, via SlkTableRegistry) is tried first, then the optional
+        // unit.ini / UnitStrings catalog fills in whatever is left. Built up front so
+        // DzCompat_InitModelPaths can be written near the top of the file (right after
+        // the compat implementations that follow endglobals) instead of at the bottom.
         List<String> modelPathLines = Collections.emptyList();
-        if (ModelPathRegistry.scriptUsesDzSetUnitModel(jassScript) || neededNames.contains("DzSetUnitModel")) {
-            modelPathLines = ModelPathRegistry.buildRegistry(jassScript, unitFilePrompt, logger);
+        if (needsUnitModelTable) {
+            Map<String, String> tableModelPaths = SlkTableRegistry.buildUnitModelPathIndex(slkTableDir, logger);
+            modelPathLines = ModelPathRegistry.buildRegistry(jassScript, unitFilePrompt, tableModelPaths, logger);
         }
 
         // Find first endglobals
@@ -405,7 +412,7 @@ final class ForwardConverter {
             }
         }
 
-        // Disable Reforged's automatic UI positioning so DzFrameSetPoint and
+		// Disable Reforged's automatic UI positioning so DzFrameSetPoint and
 		// DzFrameSetAbsolutePoint work on default frames (hero bar buttons, etc.).
 		// Without this the engine silently re-anchors those frames and custom
 		// positioning appears to be ignored. Injected at the top of main(), which
@@ -417,7 +424,7 @@ final class ForwardConverter {
 			logger.log("[" + Timestamps.now() + "] WARNING: function main not found - add " +
 					   "\"call BlzEnableUIAutoPosition(false)\" once at map init yourself");
 		}
-
+		
         // DzCompat_Archive: give this specific map its own archive folder name
         // (see the __DZARCHIVE_MAP_NAME__ placeholder in DzCompat_Archive.j).
         if (neededNames.contains("GetMapName") || neededNames.contains("DzCompat_Archive_EnsureLoaded")) {
