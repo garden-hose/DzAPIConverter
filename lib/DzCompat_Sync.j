@@ -40,3 +40,23 @@
     function DzGetTriggerSyncPlayer takes nothing returns player
         return GetTriggerPlayer()
     endfunction
+
+	function DzTriggerRegisterMallItemSyncData takes trigger trig returns nothing
+		call DzTriggerRegisterSyncData(trig, "DZMIA", true)
+	endfunction
+	
+	function DzTriggerRegisterMallItemConsumeEvent takes trigger trig returns nothing
+		call DzTriggerRegisterSyncData(trig, "DZMIC", true)
+	endfunction
+	
+	function DzTriggerRegisterMallItemRemoveEvent takes trigger trig returns nothing
+		call DzTriggerRegisterSyncData(trig, "DZMID", true)
+	endfunction
+	
+	function DzGetTriggerMallItemPlayer takes nothing returns player
+		return DzGetTriggerSyncPlayer()
+	endfunction
+	
+	function DzGetTriggerMallItem takes nothing returns string
+		return DzGetTriggerSyncData()
+	endfunction
