@@ -90,8 +90,10 @@ final class MainWindow {
         pathsPanel.setLayout(new BoxLayout(pathsPanel, BoxLayout.Y_AXIS));
 
         pathsPanel.add(makePathRow("Map script path:", inputField, e -> chooseInput()));
+		inputField.setToolTipText("Input path to the map script (war3map.j)");
         pathsPanel.add(Box.createVerticalStrut(8));
         pathsPanel.add(makePathRow("Output path:", outputField, e -> chooseOutput()));
+		outputField.setToolTipText("Output path to the converted map script");
         pathsPanel.add(Box.createVerticalStrut(8));
         pathsPanel.add(makePathRow("Map table path:", mapTableInputField, e -> chooseMapTableFolder()));
         mapTableInputField.setToolTipText(
@@ -99,6 +101,16 @@ final class MainWindow {
             "Used to bake the object data that EXExecuteScript reads through jass.slk. " +
             "If this is empty, or the folder has no table .ini files, EXExecuteScript is not converted.");
 
+        // --- red warning row under Map table path ---
+        JPanel warningRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        JLabel warningLabel = new JLabel(
+            "IMPORTANT: Extract your map's tables (Unit.ini, ability.ini, item.ini, etc.) " +
+            "to a folder and set the folder in \"Map table path\" field");
+        warningLabel.setForeground(Color.RED);
+        warningRow.add(warningLabel);
+        pathsPanel.add(warningRow);
+        pathsPanel.add(Box.createVerticalStrut(8));
+		
         // --- stub option fields ---
         JPanel optionsPanel = new JPanel(new GridBagLayout());
         optionsPanel.setBorder(BorderFactory.createTitledBorder("Native Overrides"));
