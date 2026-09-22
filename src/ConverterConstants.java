@@ -134,6 +134,7 @@ final class ConverterConstants {
         "DzFrameSetUpdateCallbackByCode", "DzFrameSetUpdateCallback", "DzGetUnitUnderMouse",
 		"DzCompat_MouseLMBCondition", "DzCompat_MouseRMBCondition", "DzGetMouseX", "DzGetMouseY",
 		"DzGetMouseXRelative", "DzGetMouseYRelative",
+		"DzTriggerRegisterMouseEventTrg", "DzTriggerRegisterMouseMoveEventTrg",
         // Trivial helpers + OSKEY conversion 
         "DzTriggerRegisterKeyEventTrg", "DzTriggerRegisterMouseWheelEventTrg",
         // DzCompat_Archive.j direct Map API entry points
