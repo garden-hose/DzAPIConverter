@@ -57,7 +57,8 @@ final class ConverterConstants {
         "DzQueueIssueInstantPointOrderById", "DzQueueIssueInstantTargetOrderById", "DzQueueIssueBuildOrderById",
         "DzQueueIssueNeutralImmediateOrderById", "DzQueueIssueNeutralPointOrderById", "DzQueueIssueNeutralTargetOrderById",
         "DzQueueGroupImmediateOrderById", "DzQueueGroupPointOrderById", "DzQueueGroupTargetOrderById",
-        "DzAttackAbilityEndCooldown",
+        "DzAttackAbilityEndCooldown", "DzGetTriggerMallItem", "DzGetTriggerMallItemPlayer",
+		"DzTriggerRegisterMallItemSyncData", "DzTriggerRegisterMallItemConsumeEvent", "DzTriggerRegisterMallItemRemoveEvent",
         // DzCompat_Stats.j
         "DzSetUnitDescription", "DzSetUnitPortrait", "DzSetUnitCollisionSize", "DzSetUnitSelectScale",
         "DzSetUnitHitIgnore", "DzGetUnitOverheadOffset", "DzGetTerrainZ", "DzUnitCanPlaceAround", "DzPositionCanPlaceAround",
