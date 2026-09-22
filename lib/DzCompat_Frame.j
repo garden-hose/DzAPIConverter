@@ -48,6 +48,8 @@
         // Cached GameUI origin frame (see DzCompat_GetGameUI).
         framehandle gDzCompatGameUI = null
 
+    	framehandle gDzStableParent = null
+
         // (frame id, event id) -> the trigger DzFrameSetScriptByCode built for it.
         // DzAPI keeps ONE script per frame and event, so setting it again must replace
         // the earlier one instead of stacking a second callback on top of it.
@@ -234,25 +236,40 @@
         return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_COMMAND_BUTTON, row * 4 + column))
     endfunction
 
-	function DzFrameGetHeroBarButton takes integer buttonId returns integer
-		local framehandle f = BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, buttonId)
-		local framehandle consoleUI = null
+function DzCompat_GetStableParent takes nothing returns framehandle
+    if gDzStableParent == null then
+        // ConsoleUI is the root of the UI hierarchy and was NOT restructured
+        set gDzStableParent = BlzGetFrameByName("ConsoleUI", 0)
+        if gDzStableParent == null then
+            set gDzStableParent = DzCompat_GetGameUI()
+        endif
+    endif
+    return gDzStableParent
+endfunction
 
-		if f != null then
-			// Detach this specific button from the auto-positioning system
-			call BlzFrameClearAllPoints(f)
-			
-			// Re-anchor it to the stable ConsoleUI frame with its original default position
-			set consoleUI = BlzGetFrameByName("ConsoleUI", 0)
-			if consoleUI != null then
-				// These coordinates match the vanilla hero button position
-				// (top-left of the screen area)
-				call BlzFrameSetAbsPoint(f, FRAMEPOINT_TOPLEFT, 0.0, 0.55)
-			endif
-		endif
-
-		return DzCompat_RegisterFrame(f)
-	endfunction
+function DzFrameGetHeroBarButton takes integer buttonId returns integer
+    local framehandle realBtn = BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, buttonId)
+    
+    // Return a proxy frame that is a child of a STABLE parent.
+    local framehandle proxy = BlzCreateFrameByType("BACKDROP", "DzHeroProxy" + I2S(buttonId), DzCompat_GetStableParent(), "", 0)
+    
+    // Make it invisible
+    call BlzFrameSetAlpha(proxy, 0)
+    
+    // Give it the same size as the real button
+    if realBtn != null then
+        call BlzFrameSetSize(proxy, BlzFrameGetWidth(realBtn), BlzFrameGetHeight(realBtn))
+    else
+        call BlzFrameSetSize(proxy, 0.03, 0.03) // fallback size
+    endif
+    
+    // Position it using ABSOLUTE coordinates in the 4:3 UI space.
+    // The hero buttons are at the LEFT side of the screen.
+    // Coordinates: TOPLEFT (0.0, 0.55) is the typical hero bar position.
+    call BlzFrameSetAbsPoint(proxy, FRAMEPOINT_TOPLEFT, 0.0, 0.55 - (buttonId * 0.04))
+    
+    return DzCompat_RegisterFrame(proxy)
+endfunction
 
     function DzFrameGetHeroHPBar takes integer buttonId returns integer
         return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_HERO_HP_BAR, buttonId))
