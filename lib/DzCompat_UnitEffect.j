@@ -510,45 +510,6 @@ endglobals
         return allOk
     endfunction
 
-
-    // ---- mouse cursor position (Reforged 3.0+) --------------------
-    // BlzGetMouseScreenPosX/Y are new in 3.0 and return the mouse's absolute
-    // screen position in pixels - same shape and units as Dz's originals.
-    // There's no separate "relative" native in 3.0 (no second reference point
-    // is exposed), so the *Relative variants are mapped to the same call. If
-    // your map actually needs a value relative to something other than the
-    // screen origin (e.g. relative to a specific frame), tell me what that
-    // reference point should be and I'll adjust - as written these four
-    // functions are all equivalent.
-
-    function DzGetMouseX takes nothing returns integer
-        return BlzGetMouseScreenPosX()
-    endfunction
-
-    function DzGetMouseY takes nothing returns integer
-        return BlzGetMouseScreenPosY()
-    endfunction
-
-    function DzGetMouseXRelative takes nothing returns integer
-		// needs verification
-		call DzCompat_EnsureMouseTracking()
-        if GetTriggerPlayer() != null then
-            return R2I(BlzGetTriggerPlayerMouseX())
-        endif
-        return R2I(LoadReal(gDzCompatMouseTrack, GetPlayerId(GetLocalPlayer()), 0))
-        //return BlzGetMouseScreenPosX()
-    endfunction
-
-    function DzGetMouseYRelative takes nothing returns integer
-		// needs verification
-		call DzCompat_EnsureMouseTracking()
-        if GetTriggerPlayer() != null then
-            return R2I(BlzGetTriggerPlayerMouseY())
-        endif
-        return R2I(LoadReal(gDzCompatMouseTrack, GetPlayerId(GetLocalPlayer()), 1))
-        //return BlzGetMouseScreenPosY()
-    endfunction
-
     // ---- Unit under mouse / local selection (KK-JAPI) ---
 
     // BlzGetMouseFocusUnit is the Reforged equivalent of
