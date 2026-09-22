@@ -57,7 +57,6 @@ final class ConverterConstants {
         "DzQueueIssueInstantPointOrderById", "DzQueueIssueInstantTargetOrderById", "DzQueueIssueBuildOrderById",
         "DzQueueIssueNeutralImmediateOrderById", "DzQueueIssueNeutralPointOrderById", "DzQueueIssueNeutralTargetOrderById",
         "DzQueueGroupImmediateOrderById", "DzQueueGroupPointOrderById", "DzQueueGroupTargetOrderById",
-        "DzGetMouseX", "DzGetMouseY", "DzGetMouseXRelative", "DzGetMouseYRelative",
         "DzAttackAbilityEndCooldown",
         // DzCompat_Stats.j
         "DzSetUnitDescription", "DzSetUnitPortrait", "DzSetUnitCollisionSize", "DzSetUnitSelectScale",
