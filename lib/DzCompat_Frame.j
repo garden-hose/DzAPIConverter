@@ -239,13 +239,15 @@
 		local framehandle consoleUI = null
 
 		if f != null then
-			// Free the button from its locked default anchors
+			// Detach this specific button from the auto-positioning system
 			call BlzFrameClearAllPoints(f)
 			
-			// Re-anchor it to the stable ConsoleUI frame so it can be moved
+			// Re-anchor it to the stable ConsoleUI frame with its original default position
 			set consoleUI = BlzGetFrameByName("ConsoleUI", 0)
 			if consoleUI != null then
-				call BlzFrameSetPoint(f, FRAMEPOINT_TOPLEFT, consoleUI, FRAMEPOINT_TOPLEFT, 0.0, 0.0)
+				// These coordinates match the vanilla hero button position
+				// (top-left of the screen area)
+				call BlzFrameSetAbsPoint(f, FRAMEPOINT_TOPLEFT, 0.0, 0.55)
 			endif
 		endif
 
