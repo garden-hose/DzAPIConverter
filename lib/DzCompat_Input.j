@@ -94,9 +94,12 @@ endglobals
             set keyMatch = (curKey == ConvertOsKeyType(LoadInteger(gDzInputKeyReg, tid, i * 3)))
             // status assumption: 0 = up/released, 1 = down/pressed
             set statusMatch = (curDown == (LoadInteger(gDzInputKeyReg, tid, i * 3 + 1) != 0))
-            if keyMatch and statusMatch then
-                call ExecuteFunc(LoadStr(gDzInputKeyReg, tid, i * 3 + 2))
-            endif
+			if keyMatch and statusMatch then
+				set funcName = LoadStr(gDzInputKeyReg, tid, i * 3 + 2)
+				if funcName != null and funcName != "" then
+					call ExecuteFunc(funcName)
+				endif
+			endif
             set i = i + 1
         endloop
     endfunction
