@@ -411,19 +411,6 @@ final class ForwardConverter {
                            "ExecuteFunc(\"" + AbilityHotkeyRegistry.INIT_FUNCTION + "\") once at map init yourself");
             }
         }
-
-		// Disable Reforged's automatic UI positioning so DzFrameSetPoint and
-		// DzFrameSetAbsolutePoint work on default frames (hero bar buttons, etc.).
-		// Without this the engine silently re-anchors those frames and custom
-		// positioning appears to be ignored. Injected at the top of main(), which
-		// is early enough for the engine to pick it up before the first UI layout.
-		if (JassScript.injectStatementIntoMain(finalOutput,
-				"call BlzEnableUIAutoPosition(false)")) {
-			logger.log("[" + Timestamps.now() + "] Injected BlzEnableUIAutoPosition(false) into main");
-		} else {
-			logger.log("[" + Timestamps.now() + "] WARNING: function main not found - add " +
-					   "\"call BlzEnableUIAutoPosition(false)\" once at map init yourself");
-		}
 		
         // DzCompat_Archive: give this specific map its own archive folder name
         // (see the __DZARCHIVE_MAP_NAME__ placeholder in DzCompat_Archive.j).
