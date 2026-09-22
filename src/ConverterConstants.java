@@ -141,7 +141,7 @@ final class ConverterConstants {
         "DzAPI_Map_StoreString", "DzAPI_Map_StoreInteger", "DzAPI_Map_StoreReal", "DzAPI_Map_StoreBoolean",
         "DzAPI_Map_GetStoredString", "DzAPI_Map_GetStoredInteger", "DzAPI_Map_GetStoredReal", "DzAPI_Map_GetStoredBoolean",
 		// DzCompat_Core.j - a native that some environments (YDWE / AI script natives) provide
-        "UnitAlive"
+        "UnitAlive", "DzF2I", "DzI2F", "DzK2I", "DzI2K"
     ));
 
     static final String[] LIB_FILES = {
