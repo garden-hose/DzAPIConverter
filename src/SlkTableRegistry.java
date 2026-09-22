@@ -298,7 +298,7 @@ final class SlkTableRegistry {
     }
 
     /** lower-case file name -> path for every regular file in the folder. */
-    private static Map<String, Path> listIniFiles(Path dir, Logger logger) {
+    static Map<String, Path> listIniFiles(Path dir, Logger logger) {
         Map<String, Path> map = new LinkedHashMap<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
             for (Path p : stream) {
@@ -313,7 +313,7 @@ final class SlkTableRegistry {
     }
 
     /** W3x2lni writes UTF-8; anything else goes through the lenient sniffing reader. */
-    private static List<String> readIni(Path file, Logger logger) throws IOException {
+    static List<String> readIni(Path file, Logger logger) throws IOException {
         byte[] bytes = Files.readAllBytes(file);
         String text;
         try {
@@ -329,7 +329,7 @@ final class SlkTableRegistry {
     }
 
     /** Object ids that can be written as a JASS rawcode literal. */
-    private static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9]{4}");
+    static final Pattern ID_PATTERN = Pattern.compile("[A-Za-z0-9]{4}");
 
     /** One value to bake. */
     private static final class Baked {
