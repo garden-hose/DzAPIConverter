@@ -89,6 +89,7 @@ endglobals
         local boolean curDown = BlzGetTriggerPlayerIsKeyDown()
         local boolean keyMatch
         local boolean statusMatch
+		local string funcName
         loop
             exitwhen i >= count
             set keyMatch = (curKey == ConvertOsKeyType(LoadInteger(gDzInputKeyReg, tid, i * 3)))
