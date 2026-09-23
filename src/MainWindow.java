@@ -41,6 +41,8 @@ final class MainWindow {
     private final JButton reverseButton = new JButton("Reverse Functions");
     /** When checked, Convert first removes "native dz..." declarations the script never uses. */
 	private final JCheckBox clearUnusedNativesCheckbox = new JCheckBox("Clear unused natives", true);
+    /** When checked, Convert strips leading spaces/tabs from every line of the converted script. */
+    private final JCheckBox removeIndentationCheckbox = new JCheckBox("Remove indentation", false);
     private final JTextArea consoleArea = new JTextArea();
     private final JFileChooser fileChooser = new JFileChooser();
 
@@ -184,9 +186,12 @@ final class MainWindow {
         clearUnusedNativesCheckbox.setToolTipText(
             "Convert only: first removes every \"native dz...\" declaration that is declared " +
             "in the script but never used anywhere else.");
+        removeIndentationCheckbox.setToolTipText(
+            "Convert only: strips leading spaces and tabs from every line of the converted map script.");
         buttonPanel.add(convertButton);
         buttonPanel.add(reverseButton);
         buttonPanel.add(clearUnusedNativesCheckbox);
+        buttonPanel.add(removeIndentationCheckbox);
         buttonPanel.setBorder(new EmptyBorder(10, 0, 6, 0));
 
         JPanel north = new JPanel(new BorderLayout());
@@ -308,6 +313,7 @@ final class MainWindow {
         }
         settings.unlockStubs = unlockCheckbox.isSelected();
         settings.clearUnusedNatives = clearUnusedNativesCheckbox.isSelected();
+        settings.removeIndentation = removeIndentationCheckbox.isSelected();
 
         // Save settings after reading UI values
         saveSettings();
@@ -319,6 +325,7 @@ final class MainWindow {
         log("Output path: " + outPath);
         log("Map table path: " + (tablePath.isEmpty() ? "(none - EXExecuteScript will not be converted)" : tablePath));
         log("Clear unused natives = " + settings.clearUnusedNatives);
+        log("Remove indentation = " + settings.removeIndentation);
         log("Overrides = " + settings.unlockStubs);
 
         // Run conversion off the EDT
@@ -430,6 +437,8 @@ final class MainWindow {
 
         clearUnusedNativesCheckbox.setSelected(Boolean.parseBoolean(
             props.getProperty("clearUnusedNatives", "true")));
+        removeIndentationCheckbox.setSelected(Boolean.parseBoolean(
+            props.getProperty("removeIndentation", "false")));
 
         // Apply the Unlock gate last, so it locks/unlocks the fields only
         // after their saved values have been restored.
@@ -445,6 +454,7 @@ final class MainWindow {
         props.setProperty("mapTableInputPath", mapTableInputField.getText().trim());
         props.setProperty("unlockStubs", Boolean.toString(unlockCheckbox.isSelected()));
         props.setProperty("clearUnusedNatives", Boolean.toString(clearUnusedNativesCheckbox.isSelected()));
+        props.setProperty("removeIndentation", Boolean.toString(removeIndentationCheckbox.isSelected()));
         props.setProperty("stubHasMallItem", (hasMallItemCombo.getSelectedItem() != null) ? hasMallItemCombo.getSelectedItem().toString() : "true");
         Object levelVal = getMapLevelSpinner.getValue();
         props.setProperty("stubGetMapLevel", (levelVal instanceof Number) ? levelVal.toString() : "99");

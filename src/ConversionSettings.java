@@ -17,6 +17,10 @@ final class ConversionSettings {
      *  that the script declares but never uses. Off by default (and in CLI mode). */
     boolean clearUnusedNatives = true;
 
+    /** When true, the last step of a conversion strips leading spaces and tabs from
+     *  every line of the converted map script. Off by default (and in CLI mode). */
+    boolean removeIndentation = false;
+
     /** When true, right after "Clear unused natives" the script is checked against the names
      *  Reforged's common.j already declares: native declarations of natives that exist in
      *  Reforged are dropped, and globals the map declares under a common.j name are removed

@@ -30,6 +30,23 @@ final class JassScript {
         return filtered;
     }
 
+    /** Returns a copy of {@code lines} with leading spaces and tabs removed from every line.
+     *  Trailing whitespace and the contents of the line are left untouched. */
+    static List<String> stripIndentation(List<String> lines) {
+        List<String> stripped = new ArrayList<>(lines.size());
+        for (String line : lines) {
+            int i = 0;
+            int n = line.length();
+            while (i < n) {
+                char c = line.charAt(i);
+                if (c != ' ' && c != '\t') break;
+                i++;
+            }
+            stripped.add(i == 0 ? line : line.substring(i));
+        }
+        return stripped;
+    }
+
     /**
      * Insert {@code call funcName()} at the start of {@code function main}.
      * @return true if main was found and the call inserted, false otherwise

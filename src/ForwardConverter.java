@@ -465,6 +465,12 @@ final class ForwardConverter {
             logger.log("[" + Timestamps.now() + "] DzCompat_Archive: per-map folder name set to \"" + safeMapName + "\"");
         }
 
+        // Optional last pass: drop leading spaces/tabs from every output line
+        if (settings.removeIndentation) {
+            finalOutput = JassScript.stripIndentation(finalOutput);
+            logger.log("[" + Timestamps.now() + "] Remove indentation: stripped leading spaces/tabs from the converted script");
+        }
+
         // Write using the same encoding as the input so the map keeps working
         // (Chinese maps often need GBK/GB18030; rewriting as UTF-8 would break them)
         Files.write(Paths.get(outputPath), finalOutput, inputCharset);
