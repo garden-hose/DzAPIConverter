@@ -22,4 +22,10 @@ final class ConversionSettings {
      *  Reforged are dropped, and globals the map declares under a common.j name are removed
      *  (unused) or renamed (used). Needs lib/ReforgedCommonNames.txt; skipped when it is missing. */
     boolean fixReforgedNameCollisions = true;
+
+    /** When true, GetUnitState/SetUnitState call sites that read an extended
+     *  (non-stock) index via ConvertUnitState(N) - kkapi/YDWE's UnitState.cpp hook -
+     *  are rewritten to route through DzCompat_GetExtUnitState/SetExtUnitState
+     *  (lib/DzCompat_ExtendedUnitState.j) instead of silently returning 0 in Reforged. */
+    boolean convertExtendedUnitState = true;
 }

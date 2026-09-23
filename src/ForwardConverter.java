@@ -124,6 +124,33 @@ final class ForwardConverter {
             }
         }
 
+        // Extended unit-state (GetUnitState/SetUnitState + ConvertUnitState(N) hook)
+        // call-site rewrite. Independent of the native-declaration passes above/below -
+        // these are stock native calls, not "native X" declarations - so it runs as its
+        // own pass and, when it rewrites anything, feeds the wrapper function names into
+        // neededNames below so the normal dependency closure pulls in
+        // lib/DzCompat_ExtendedUnitState.j for us.
+        ExtendedUnitStateConverter.Result extStateResult = null;
+        if (settings.convertExtendedUnitState) {
+            extStateResult = ExtendedUnitStateConverter.convert(jassScript);
+            jassScript = extStateResult.lines;
+            if (extStateResult.changedAnything()) {
+                int totalSites = extStateResult.rewrittenByIndex.values().stream().mapToInt(Integer::intValue).sum();
+                logger.log("[" + Timestamps.now() + "] Extended unit-state: rewrote " + totalSites +
+                           " GetUnitState/SetUnitState call site(s) across " + extStateResult.rewrittenByIndex.size() +
+                           " extended index(es) to use DzCompat_Get/SetExtUnitState");
+                for (Map.Entry<Long, Integer> e : extStateResult.rewrittenByIndex.entrySet()) {
+                    logger.log("[" + Timestamps.now() + "]   - index " + e.getKey() + ": " + e.getValue() + " call site(s)");
+                }
+                List<Long> unmapped = extStateResult.unmappedIndices();
+                if (!unmapped.isEmpty()) {
+                    logger.log("[" + Timestamps.now() + "] WARNING: extended index(es) " + unmapped +
+                               " have no case in lib/DzCompat_ExtendedUnitState.j yet - rewritten calls for " +
+                               "them will fall back to 0/no-op (same as before) until a case is added there");
+                }
+            }
+        }
+
         // Collect native declarations that have real implementations
         List<Integer> nativeIndices = new ArrayList<>();
         List<String> nativeNames = new ArrayList<>();
@@ -149,6 +176,15 @@ final class ForwardConverter {
                 neededNames.add(name);
                 realCount++;
             }
+        }
+
+        // Pull in the extended unit-state wrapper(s) the rewrite pass above actually used,
+        // if any - the dependency closure below then brings in DzCompat_ExtendedUnitState.j
+        // (and gDzCompatUnitStateTable from DzCompat_Stats.j) the same way it does for any
+        // other needed helper function.
+        if (extStateResult != null) {
+            if (extStateResult.usedGet) neededNames.add("DzCompat_GetExtUnitState");
+            if (extStateResult.usedSet) neededNames.add("DzCompat_SetExtUnitState");
         }
 
         // EXExecuteScript is only converted when there is a table folder with table .ini
@@ -180,7 +216,7 @@ final class ForwardConverter {
         logger.log("[" + Timestamps.now() + "] Found " + realCount +
                    " native declarations with real Reforged-compatible implementations");
 
-		logger.log("[Converter is processing. Don't close...]");
+        logger.log("[Converter is processing. Don't close...]");
 
         // EXExecuteScript: bake the jass.slk object data the script reads. Done before
         // the dependency closure because the generated code calls DzCompat_SlkDeclare /

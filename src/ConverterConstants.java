@@ -156,6 +156,7 @@ final class ConverterConstants {
         "DzCompat_Ability.j",
         "DzCompat_StringBit.j",
         "DzCompat_Stats.j",
+        "DzCompat_ExtendedUnitState.j",
 		"DzCompat_Lua.j",
         "DzCompat_Archive.j",
         "DzCompat_Platform.j",
