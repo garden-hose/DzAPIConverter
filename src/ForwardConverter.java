@@ -479,6 +479,17 @@ final class ForwardConverter {
         logger.log("[" + Timestamps.now() + "] Conversion SUCCESS");
         logger.log("[" + Timestamps.now() + "] " + realCount + " natives given real implementations, " +
                    stubCount + " natives stubbed with dummy values");
+
+        // Reforged 3.0: rewrite ability.ini parents AIs2 -> AIsx (attack-speed item ability).
+        // Runs after a successful script conversion. Uses the same Map table path when already
+        // resolved; otherwise tries once more so the fix still runs when the script never needed
+        // EXExecuteScript / hotkeys / DzSetUnitModel.
+        Path parentFixTableDir = slkTableDir;
+        if (parentFixTableDir == null) {
+            parentFixTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
+        }
+        AIs2ParentFixer.fix(parentFixTableDir, logger);
+
         if (!unknownNatives.isEmpty()) {
             // De-dupe while preserving order for a cleaner log
             Set<String> seen = new LinkedHashSet<>(unknownNatives);
