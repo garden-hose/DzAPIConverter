@@ -51,30 +51,61 @@
 // ============================================================================
 
     globals
-        // Lazily created the first time index 81 is ever written - maps that
-        // never touch rate-of-fire never pay for a trigger they don't need.
+        // Lazily created the first time index 37 or 81 is ever touched - a map
+        // that touches neither never pays for a trigger it doesn't need.
         trigger gDzCompatExtStateAttackSpeedTrigger = null
     endglobals
 
-    // Applies unit's stored rate-of-fire multiplier (if any) to its actual
-    // attack cooldown right now. Multiplier semantics: 1.0 = the weapon's own
-    // base cooldown (no change), 2.0 = attacks twice as often, 0.5 = half as
-    // often, and so on - the natural reading of "rate multiplier". A stored
-    // value of 0 (nothing ever written for this unit) is treated as "no
-    // override" and left alone.
-    function DzCompat_ExtStateApplyAttackSpeed takes unit whichUnit returns nothing
-        local real mult = LoadReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9081)
-        local real baseCooldown
-        if mult <= 0 then
-            return // nothing stored for this unit - leave its natural cooldown alone
+    // Returns the unit's TRUE, unmodified base attack cooldown, captured once
+    // (the first time this unit's speed is ever touched by index 37 or 81) and
+    // cached from then on. This - never the live field, which after the first
+    // call is only ever written by BlzSetUnitAttackCooldown as a transient,
+    // per-attack override - is the one fixed reference point both index 37's
+    // delta and index 81's fractional bonus are computed against, which is
+    // what makes the two additive/multiplicative effects combine correctly
+    // instead of one of them re-dividing a value the other already modified.
+    function DzCompat_ExtStateGetFrozenBaseCooldown takes unit whichUnit returns real
+        local integer id = GetHandleId(whichUnit)
+        local real cached
+        if HaveSavedReal(gDzCompatUnitStateTable, id, 9083) then
+            return LoadReal(gDzCompatUnitStateTable, id, 9083)
         endif
-        set baseCooldown = BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 0)
-        call BlzSetUnitAttackCooldown(whichUnit, baseCooldown / mult, 0)
+        set cached = BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 0)
+        call SaveReal(gDzCompatUnitStateTable, id, 9083, cached)
+        return cached
+    endfunction
+
+    // The one place a unit's live cooldown is ever computed. Combines index
+    // 37's accumulated absolute delta (tag 9084, "+/-.05 nudges" from the
+    // map's own threshold mechanic) with index 81's fractional bonus (tag
+    // 9081; 0.15 means +15% attack speed, same confirmed semantics as the
+    // AIs2 DataA field) against the SAME frozen baseline, in one formula:
+    //     adjustedBase = frozenBaseline - delta37
+    //     finalCooldown = adjustedBase / (1 + bonus81)
+    // Always applies, even when both are back to 0, so that removing the last
+    // active source correctly resets the unit to its true base cooldown
+    // instead of leaving a stale override in place.
+    function DzCompat_ExtStateApplyAttackSpeed takes unit whichUnit returns nothing
+        local integer id = GetHandleId(whichUnit)
+        local real frozenBase = DzCompat_ExtStateGetFrozenBaseCooldown(whichUnit)
+        local real delta37 = LoadReal(gDzCompatUnitStateTable, id, 9084)
+        local real bonus81 = LoadReal(gDzCompatUnitStateTable, id, 9081)
+        local real adjustedBase = frozenBase - delta37
+        if frozenBase <= 0 then
+            return // no real weapon on this unit - nothing to scale
+        endif
+        if adjustedBase <= 0.01 then
+            set adjustedBase = 0.01 // safety floor - never let index 37's own deltas reach/cross zero or negative
+        endif
+        if bonus81 < 0 then
+            set bonus81 = 0. // floating-point drift guard; never speed a unit below its adjusted base
+        endif
+        call BlzSetUnitAttackCooldown(whichUnit, adjustedBase / (1.0 + bonus81), 0)
     endfunction
 
     // EVENT_PLAYER_UNIT_ATTACKED handler: Reforged resets a unit's cooldown to
     // its own base value on every attack, so the override has to be reapplied
-    // here every time, not just once when the multiplier is set.
+    // here every time, not just once when either index is set.
     function DzCompat_ExtStateAttackSpeedHandler takes nothing returns nothing
         call DzCompat_ExtStateApplyAttackSpeed(GetAttacker())
     endfunction
@@ -105,18 +136,18 @@
             // [REAL] 0x20 Armor
             return BlzGetUnitArmor(whichUnit)
         elseif idx == 37 then
-            // [APPROX] 0x25 Attack 1 interval/cooldown - this returns the *live*
-            // cooldown (post agility/item bonuses). If the source map meant the
-            // static design-time base cooldown instead, swap this for
-            // BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 0).
-            return BlzGetUnitAttackCooldown(whichUnit, 0)
+            // [APPROX] 0x25 Attack 1 interval/cooldown - 
+			// Returns frozenBaseline - accumulatedDelta, so
+            // the map's own read-modify-write (GetUnitState(...) - .05, then
+            // SetUnitState(..., newVal)) round-trips consistently: this is a
+            // computed value now, not a raw field read, specifically so it
+            // never drifts out of sync with what index 81's bonus is applied
+            // against.
+            return DzCompat_ExtStateGetFrozenBaseCooldown(whichUnit) - LoadReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9084)
         elseif idx == 81 then
-            // [LOCAL] 0x51 Rate
-            // of fire. Bookkept only. Some map scripts applies its real
-            // attack-speed effect by writing straight to index 37 when this
-            // crosses its own >=3. threshold (now a real field write - see
-            // DzCompat_SetExtUnitState's idx==37 case) - turning on the
-            // BlzSetUnitAttackCooldown hook here too would double the effect.
+            // [APPROX] 0x51 Rate of fire.
+            // Returns the raw accumulated bonus (0.15 means +15% attack speed) -
+            // the map's own >=3. threshold check reads this directly.
             return LoadReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9081)
         else
             // Unmapped extended index - see the hex table above. Falls back to 0,
@@ -133,19 +164,22 @@
             // [REAL] 0x20 Armor
             call BlzSetUnitArmor(whichUnit, value)
         elseif idx == 37 then
-            // [REAL] 0x25 Attack 1 interval/cooldown, writable. This map reads
-            // this, adds/subtracts a small delta (e.g. the index-81 threshold
-            // mechanic below nudges it by +/-.05 or +/-.1 directly), and writes
-            // it back - a plain field write, not a derived value, and the actual
-            // lever this map uses to change attack speed.
-            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 0, value)
+            // [REAL, unified with index 81 - see header] 0x25 Attack 1
+            // interval/cooldown. Derives the accumulated delta directly from
+            // the new absolute value (delta = frozenBaseline - value) rather
+            // than tracking it separately, so Get/Set stay consistent by
+            // construction, then lets DzCompat_ExtStateApplyAttackSpeed - the
+            // one place cooldown is ever actually computed - combine it with
+            // index 81's bonus and apply the result.
+            call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9084, DzCompat_ExtStateGetFrozenBaseCooldown(whichUnit) - value)
+            call DzCompat_ExtStateEnsureAttackSpeedHook()
+            call DzCompat_ExtStateApplyAttackSpeed(whichUnit)
         elseif idx == 81 then
-            // [LOCAL] 0x51 Rate
-            // of fire. Some map scripts already apply the speed change 
-			// (via index 37, above) whenever this value crosses its own 
-			// >=3. threshold, so auto-applying BlzSetUnitAttackCooldown 
-			// here too stacks a second, redundant speed change on top of that.
-			// In which case the user will have to manually adjust this.
+            // [REAL, unified with index 37 - see header, enabled by default]
+            // 0x51 Rate of fire. Stores the bonus, then lets
+            // DzCompat_ExtStateApplyAttackSpeed combine it with index 37's
+            // delta (both anchored on the same frozen baseline) and apply the
+            // single, non-double-counted result.
             call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9081, value)
             call DzCompat_ExtStateEnsureAttackSpeedHook()
             call DzCompat_ExtStateApplyAttackSpeed(whichUnit)

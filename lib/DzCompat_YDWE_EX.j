@@ -58,6 +58,19 @@
         // EXGetAbilityDataInteger's data_type 200/202 below. Empty (all lookups return 0)
         // when the map does not read either field, or when no ability.ini was supplied.
         hashtable gYDWEEXHotkey = InitHashtable()
+        // Ability rawcodes recognized as using the Aamk ("hidden stat bonus": Agility/
+        // Intelligence/Strength Bonus + Hide Button) Data A/B/C field layout, marked at
+        // conversion time from table\ability.ini's _parent field - see
+        // AbilityDataFieldRegistry.java and EXGet/SetAbilityDataReal/Integer's data_type
+        // 108/109/110 cases below. Needed because Reforged's BlzGetAbilityIntegerLevelField
+        // constants are generated per base-ability field layout, not as one generic "Data A"
+        // slot valid for every ability - field 108 means something different (e.g. "Follow
+        // Through Time") on an ability that is not Aamk-derived, so this has to be checked
+        // per-abilcode rather than handled unconditionally like DUR/HERODUR/COOL/AREA/RNG
+        // above. Empty (both getters/setters fall through to bookkeeping-only, same as
+        // before this table existed) when ability.ini has no Aamk-parented abilities, or
+        // when no ability.ini was supplied.
+        hashtable gYDWEEXAamk = InitHashtable()
         // persistent per-itemcode work-item cache (see YDWEEX_GetCachedWorkItem)
         // - kept separate from gYDWEEXOwner/gYDWEEXLocal because it deliberately
         // uses a fixed parent key with itemcode as the child key, and mixing a
@@ -268,16 +281,38 @@
     // Ability level data - Real / Integer / String
     // ============================================================================
 
+    // ---- Aamk ability-family recognition -------------------------------------
+    // Populated by DzCompat_InitAamkAbilities, generated at conversion time from
+    // table\ability.ini by AbilityDataFieldRegistry (mirrors how
+    // AbilityHotkeyRegistry bakes Hotkey/Researchhotkey above). An ability whose
+    // _parent is "Aamk" grants raw Agility/Intelligence/Strength bonuses through
+    // its Data A/B/C fields - see EXGetAbilityDataReal/Integer and
+    // EXSetAbilityDataReal/Integer below for the data_type 108/109/110 cases
+    // that depend on this.
+    function DzCompat_MarkAamkAbility takes integer abilcode returns nothing
+        call SaveBoolean(gYDWEEXAamk, abilcode, 0, true)
+    endfunction
+
+    function DzCompat_IsAamkAbility takes integer abilcode returns boolean
+        return HaveSavedBoolean(gYDWEEXAamk, abilcode, 0) and LoadBoolean(gYDWEEXAamk, abilcode, 0)
+    endfunction
+
     // ---- [REAL] DUR/HERODUR/COOL/AREA/RNG, reusing the same field constants
     // already verified in DzCompat_AbilityField.j for the equivalent Dz natives.
-    // [PORT LIMITATION] CAST (no generic cast-time field) and DATA_A..I (no confirmed
-    // generic "Data A..I" level-field names in Reforged) - bookkeeping only.
+    // [REAL, via DzCompat_IsAamkAbility] DATA_A/B/C on an ability marked as
+    // Aamk-derived (see above) - these three are the only generic Data fields
+    // with a confirmed, unambiguous Reforged field name, and only for that one
+    // family. [PORT LIMITATION] CAST (no generic cast-time field) and DATA_A..I
+    // on any other ability (no confirmed generic "Data A..I" level-field names
+    // in Reforged that would apply to an arbitrary ability) - bookkeeping only.
     function EXGetAbilityDataReal takes ability abil, integer level, integer data_type returns real
         local integer idx = level - 1
         if idx < 0 then
             set idx = 0
         endif
-        if data_type == 102 then //ABILITY_DATA_DUR
+		if data_type == 101 then //ABILITY_DATA_CAST
+            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_CASTING_TIME, idx)
+        elseif data_type == 102 then //ABILITY_DATA_DUR
             return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_NORMAL, idx)
         elseif data_type == 103 then //ABILITY_DATA_HERODUR
             return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_HERO, idx)
@@ -287,6 +322,12 @@
             return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_AREA_OF_EFFECT, idx)
         elseif data_type == 107 then //ABILITY_DATA_RNG
             return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_CAST_RANGE, idx)
+        elseif data_type == 108 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_A - Aamk Agility Bonus
+            return I2R(BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_AGILITY_BONUS, idx))
+        elseif data_type == 109 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_B - Aamk Intelligence Bonus
+            return I2R(BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_INTELLIGENCE_BONUS, idx))
+        elseif data_type == 110 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_C - Aamk Strength Bonus
+            return I2R(BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_STRENGTH_BONUS_ISTR, idx))
         endif
         return LoadReal(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level)
     endfunction
@@ -296,7 +337,9 @@
         if idx < 0 then
             set idx = 0
         endif
-        if data_type == 102 then //ABILITY_DATA_DUR
+        if data_type == 101 then //ABILITY_DATA_CAST
+            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_CASTING_TIME, idx, value)
+        elseif data_type == 102 then //ABILITY_DATA_DUR
             return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_NORMAL, idx, value)
         elseif data_type == 103 then //ABILITY_DATA_HERODUR
             return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_HERO, idx, value)
@@ -306,6 +349,12 @@
             return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_AREA_OF_EFFECT, idx, value)
         elseif data_type == 107 then //ABILITY_DATA_RNG
             return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_CAST_RANGE, idx, value)
+        elseif data_type == 108 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_A - Aamk Agility Bonus
+            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_AGILITY_BONUS, idx, R2I(value))
+        elseif data_type == 109 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_B - Aamk Intelligence Bonus
+            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_INTELLIGENCE_BONUS, idx, R2I(value))
+        elseif data_type == 110 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_C - Aamk Strength Bonus
+            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_STRENGTH_BONUS_ISTR, idx, R2I(value))
         endif
         call SaveReal(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level, value)
         return true
@@ -335,6 +384,12 @@
         endif
         if data_type == 104 then //ABILITY_DATA_COST
             return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_MANA_COST, idx)
+        elseif data_type == 108 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_A - Aamk Agility Bonus
+            return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_AGILITY_BONUS, idx)
+        elseif data_type == 109 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_B - Aamk Intelligence Bonus
+            return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_INTELLIGENCE_BONUS, idx)
+        elseif data_type == 110 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_C - Aamk Strength Bonus
+            return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_STRENGTH_BONUS_ISTR, idx)
         elseif data_type == 200 then //ABILITY_DATA_HOTKET - not leveled; baked from ability.ini
             return DzCompat_HotkeyGet(YDWEEX_GetAbilityCode(abil), 0)
         elseif data_type == 202 then //ABILITY_DATA_RESEARCH_HOTKEY - not leveled; baked from ability.ini
@@ -350,6 +405,12 @@
         endif
         if data_type == 104 then //ABILITY_DATA_COST
             return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_MANA_COST, idx, value)
+        elseif data_type == 108 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_A - Aamk Agility Bonus
+            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_AGILITY_BONUS, idx, value)
+        elseif data_type == 109 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_B - Aamk Intelligence Bonus
+            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_INTELLIGENCE_BONUS, idx, value)
+        elseif data_type == 110 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_C - Aamk Strength Bonus
+            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_STRENGTH_BONUS_ISTR, idx, value)
         endif
         call SaveInteger(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level, value)
         return true
@@ -377,16 +438,22 @@
         return YDWEEX_SetAbilityStringByCode(abilcode, level, data_type, value)
     endfunction
 
-    // ============================================================================
+	// ============================================================================
     // Metamorphosis helper
     // ============================================================================
 
-    // ---- [PORT LIMITATION] no confirmed field controls a Metamorphosis-style
-    // ability's target unit id at runtime in Reforged. Bookkeeping only - this
-    // will NOT actually change what a unit transforms into.
+    // ---- [APPROX] write Metamorphosis Data A (unit id) via 'Eme1', which is the
+    // same four-CC the original EX native targeted. Still mirrored into the local
+    // hashtable so a later read-back (if any) works even if the Blz write is a no-op
+    // for non-metamorphosis abilities.
     function EXSetAbilityAEmeDataA takes ability abil, integer unitid returns boolean
+        local boolean ok
+        if abil == null then
+            return false
+        endif
+        set ok = BlzSetAbilityIntegerLevelField(abil, ConvertAbilityIntegerLevelField('Eme1'), 0, unitid)
         call SaveInteger(gYDWEEXLocal, GetHandleId(abil), 555001, unitid)
-        return true
+        return ok
     endfunction
 
     // ============================================================================
@@ -829,6 +896,9 @@
     // movement/pathing type (ground/air/amphibious/etc.) in Reforged short of
     // abilities like Crow Form. Bookkeeping only - has no in-game effect.
     function EXSetUnitMoveType takes unit u, integer t returns nothing
+	    if t == 16 then
+            call SetUnitPathing(u, false)
+        endif
         call SaveInteger(gYDWEEXLocal, GetHandleId(u), 900101, t)
     endfunction
 
