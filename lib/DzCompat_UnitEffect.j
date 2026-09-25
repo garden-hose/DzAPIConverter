@@ -43,6 +43,19 @@ endglobals
         call DzCompat_EnsureMouseTracking()
         return LoadReal(gDzCompatMouseTrack, GetPlayerId(GetTriggerPlayer()), 1)
     endfunction
+	
+	// World Z under the local player's cursor. Built from the same tracked XY
+    // as X/Y via GetLocationZ (no dedicated Blz terrain-Z-under-cursor native).
+    function DzGetMouseTerrainZ takes nothing returns real
+        local location loc
+        local real z
+        call DzCompat_EnsureMouseTracking()
+        set loc = Location(LoadReal(gDzCompatMouseTrack, GetPlayerId(GetLocalPlayer()), 0), LoadReal(gDzCompatMouseTrack, GetPlayerId(GetLocalPlayer()), 1))
+        set z = GetLocationZ(loc)
+        call RemoveLocation(loc)
+        set loc = null
+        return z
+    endfunction
 
     // ---- misc ------------------------------------------------------
     // DzExecuteFunc needs no wrapper at all - it's calling into the same slot
@@ -515,6 +528,11 @@ endglobals
     // BlzGetMouseFocusUnit is the Reforged equivalent of
     // DzGetUnitUnderMouse 1:1.
     function DzGetUnitUnderMouse takes nothing returns unit
+        return BlzGetMouseFocusUnit()
+    endfunction
+	
+	// DzGetUnitUnderMouse alias 
+    function DzGetMouseFocus takes nothing returns unit
         return BlzGetMouseFocusUnit()
     endfunction
 

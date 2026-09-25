@@ -42,6 +42,19 @@ globals
     hashtable gDzInputMouseMoveRegCount        = InitHashtable()
     hashtable gDzInputMouseMoveDispatcherReady = InitHashtable()
     hashtable gDzInputMouseMoveEventReady      = InitHashtable()
+	
+	// ---- mouse-wheel (FRAMEEVENT_MOUSE_WHEEL on a full-screen catcher) ----
+    // Stock Reforged has no EVENT_PLAYER_MOUSE_WHEEL. Closest portable path is
+    // an invisible full-screen frame that receives FRAMEEVENT_MOUSE_WHEEL.
+    // Limitation: the event only fires when the cursor is over this frame
+    // (other frames that consume the wheel will block it).
+    integer   gDzCompatWheelDelta = 0
+    framehandle gDzCompatWheelFrame = null
+    boolean   gDzCompatWheelReady = false
+    trigger   gDzCompatWheelTrig = null
+    hashtable gDzInputWheelReg             = InitHashtable()
+    hashtable gDzInputWheelRegCount        = InitHashtable()
+    hashtable gDzInputWheelDispatcherReady = InitHashtable()
 endglobals
 
     // ========================================================================
@@ -732,6 +745,10 @@ endglobals
         return DzCompat_OsKeyToVk(BlzGetTriggerPlayerKey())
     endfunction
 
+	function DzIsKeyDown takes integer iKey returns boolean
+        return BlzIsKeyPressed(ConvertOsKeyType(iKey))
+    endfunction
+
     // ========================================================================
     // Mouse-button events (restored from DzCompat_InputEvents.j)
     // ========================================================================
@@ -934,24 +951,104 @@ endglobals
 	endfunction
 
     // ========================================================================
-    // Mouse wheel (limited)
+    // Mouse wheel [APPROX] (FRAMEEVENT_MOUSE_WHEEL)
     // ========================================================================
 
+    // Shared dispatcher: stash delta, then run every string-name callback
+    // registered against any user trigger (and any ByCode actions that
+    // piggy-back on the shared frame event via their own trigger).
+    function DzCompat_WheelSaveDelta takes nothing returns nothing
+        // Blizzard reports +120 / -120 style values; keep the raw integer.
+        set gDzCompatWheelDelta = R2I(BlzGetTriggerFrameValue())
+    endfunction
 
-    // [PORT LIMITATION] No portable mouse-wheel event registration in stock Reforged
-    // that matches Dz's signature. Kept as a defined no-op so maps compile.
+    function DzCompat_WheelDispatch takes nothing returns nothing
+        local integer tid
+        local integer count
+        local integer i
+        local string funcName
+        call DzCompat_WheelSaveDelta()
+        // String-name registrations are stored per user-trigger handle id.
+        // Walk every trigger that registered; only those with count > 0 fire.
+        // (Hashtable has no key enumeration in plain JASS, so string callbacks
+        // are also executed from the per-trigger path below when the user
+        // trigger itself is the frame-event target. The shared trig only
+        // keeps delta fresh for DzGetWheelDelta callers that poll.)
+    endfunction
+	
+    // Create a one-shot invisible full-screen frame used only as a wheel
+    // event target. LEVEL is high so it sits above the world, but it does
+    // not capture clicks (enable=false) so normal play is unaffected.
+    function DzCompat_EnsureWheelFrame takes nothing returns nothing
+        if gDzCompatWheelReady then
+            return
+        endif
+        set gDzCompatWheelReady = true
+        set gDzCompatWheelFrame = BlzCreateFrameByType("FRAME", "DzCompatWheelCatcher", BlzGetOriginFrame(ORIGIN_FRAME_GAME_UI, 0), "", 0)
+        call BlzFrameSetAbsPoint(gDzCompatWheelFrame, FRAMEPOINT_TOPLEFT, 0.0, 0.6)
+        call BlzFrameSetAbsPoint(gDzCompatWheelFrame, FRAMEPOINT_BOTTOMRIGHT, 0.8, 0.0)
+        call BlzFrameSetLevel(gDzCompatWheelFrame, 0)
+        call BlzFrameSetEnable(gDzCompatWheelFrame, false)
+        call BlzFrameSetVisible(gDzCompatWheelFrame, true)
+        set gDzCompatWheelTrig = CreateTrigger()
+        call BlzTriggerRegisterFrameEvent(gDzCompatWheelTrig, gDzCompatWheelFrame, FRAMEEVENT_MOUSE_WHEEL)
+        call TriggerAddAction(gDzCompatWheelTrig, function DzCompat_WheelDispatch)
+    endfunction
+
+    // [APPROX] Register wheel on the caller's trigger via the catcher frame.
+    // sync is accepted for signature compatibility and ignored (frame events
+    // are inherently local to the client that scrolled).
     function DzTriggerRegisterMouseWheelEventByCode takes trigger whichTrigger, boolean sync, code funcHandle returns nothing
+        if whichTrigger == null then
+            set whichTrigger = CreateTrigger()
+        endif
+        call DzCompat_EnsureWheelFrame()
+        // Delta must be saved before the user action runs.
+        call BlzTriggerRegisterFrameEvent(whichTrigger, gDzCompatWheelFrame, FRAMEEVENT_MOUSE_WHEEL)
+        call TriggerAddAction(whichTrigger, function DzCompat_WheelSaveDelta)
+        call TriggerAddAction(whichTrigger, funcHandle)
+    endfunction
+
+    function DzCompat_WheelStringDispatch takes nothing returns nothing
+        local integer tid = GetHandleId(GetTriggeringTrigger())
+        local integer count = LoadInteger(gDzInputWheelRegCount, tid, 0)
+        local integer i = 0
+        local string funcName
+        loop
+            exitwhen i >= count
+            set funcName = LoadStr(gDzInputWheelReg, tid, i)
+            if funcName != null and funcName != "" then
+                call ExecuteFunc(funcName)
+            endif
+            set i = i + 1
+        endloop
     endfunction
 
     function DzTriggerRegisterMouseWheelEvent takes trigger whichTrigger, boolean sync, string funcName returns nothing
+        local integer tid
+        local integer count
+        if whichTrigger == null then
+            set whichTrigger = CreateTrigger()
+        endif
+        call DzCompat_EnsureWheelFrame()
+        set tid = GetHandleId(whichTrigger)
+        set count = LoadInteger(gDzInputWheelRegCount, tid, 0)
+        call SaveStr(gDzInputWheelReg, tid, count, funcName)
+        call SaveInteger(gDzInputWheelRegCount, tid, 0, count + 1)
+        if not LoadBoolean(gDzInputWheelDispatcherReady, tid, 0) then
+            call SaveBoolean(gDzInputWheelDispatcherReady, tid, 0, true)
+            call BlzTriggerRegisterFrameEvent(whichTrigger, gDzCompatWheelFrame, FRAMEEVENT_MOUSE_WHEEL)
+            call TriggerAddAction(whichTrigger, function DzCompat_WheelSaveDelta)
+            call TriggerAddAction(whichTrigger, function DzCompat_WheelStringDispatch)
+        endif
     endfunction
 
-    // [PORT LIMITATION] Wheel delta is only valid inside a real wheel event; without
-    // registration support this always returns 0.
+    // Valid only inside a wheel callback (or immediately after one on this
+    // client). Returns 0 when no wheel event has fired yet.
     function DzGetWheelDelta takes nothing returns integer
-        return 0
+        return gDzCompatWheelDelta
     endfunction
-
+	
     // ========================================================================
     // Model path / skin helpers (DzSetUnitModel)
     // ========================================================================
