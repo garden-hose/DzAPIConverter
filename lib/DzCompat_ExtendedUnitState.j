@@ -50,6 +50,45 @@
 // library is always strictly an improvement, never a regression.
 // ============================================================================
 
+    globals
+        // Lazily created the first time index 81 is ever written - maps that
+        // never touch rate-of-fire never pay for a trigger they don't need.
+        trigger gDzCompatExtStateAttackSpeedTrigger = null
+    endglobals
+
+    // Applies unit's stored rate-of-fire multiplier (if any) to its actual
+    // attack cooldown right now. Multiplier semantics: 1.0 = the weapon's own
+    // base cooldown (no change), 2.0 = attacks twice as often, 0.5 = half as
+    // often, and so on - the natural reading of "rate multiplier". A stored
+    // value of 0 (nothing ever written for this unit) is treated as "no
+    // override" and left alone.
+    function DzCompat_ExtStateApplyAttackSpeed takes unit whichUnit returns nothing
+        local real mult = LoadReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9081)
+        local real baseCooldown
+        if mult <= 0 then
+            return // nothing stored for this unit - leave its natural cooldown alone
+        endif
+        set baseCooldown = BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 0)
+        call BlzSetUnitAttackCooldown(whichUnit, baseCooldown / mult, 0)
+    endfunction
+
+    // EVENT_PLAYER_UNIT_ATTACKED handler: Reforged resets a unit's cooldown to
+    // its own base value on every attack, so the override has to be reapplied
+    // here every time, not just once when the multiplier is set.
+    function DzCompat_ExtStateAttackSpeedHandler takes nothing returns nothing
+        call DzCompat_ExtStateApplyAttackSpeed(GetAttacker())
+    endfunction
+
+    // Registers the attack-speed hook exactly once, on first use.
+    function DzCompat_ExtStateEnsureAttackSpeedHook takes nothing returns nothing
+        if gDzCompatExtStateAttackSpeedTrigger != null then
+            return
+        endif
+        set gDzCompatExtStateAttackSpeedTrigger = CreateTrigger()
+        call TriggerRegisterAnyUnitEventBJ(gDzCompatExtStateAttackSpeedTrigger, EVENT_PLAYER_UNIT_ATTACKED)
+        call TriggerAddAction(gDzCompatExtStateAttackSpeedTrigger, function DzCompat_ExtStateAttackSpeedHandler)
+    endfunction
+
     function DzCompat_GetExtUnitState takes unit whichUnit, integer idx returns real
         if idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
@@ -72,11 +111,12 @@
             // BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 0).
             return BlzGetUnitAttackCooldown(whichUnit, 0)
         elseif idx == 81 then
-            // [LOCAL] 0x51 Rate of fire / global attack-rate multiplier - Reforged
-            // has no engine field for this at all; kkapi tracked it as a bonus
-            // layered on top of cooldown. Bookkeeping only: whatever wrote this
-            // value (DzCompat_SetExtUnitState below, or the map's own attack-speed
-            // system) is the only thing that can make it non-zero.
+            // [LOCAL] 0x51 Rate
+            // of fire. Bookkept only. Some map scripts applies its real
+            // attack-speed effect by writing straight to index 37 when this
+            // crosses its own >=3. threshold (now a real field write - see
+            // DzCompat_SetExtUnitState's idx==37 case) - turning on the
+            // BlzSetUnitAttackCooldown hook here too would double the effect.
             return LoadReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9081)
         else
             // Unmapped extended index - see the hex table above. Falls back to 0,
@@ -92,15 +132,28 @@
         elseif idx == 32 then
             // [REAL] 0x20 Armor
             call BlzSetUnitArmor(whichUnit, value)
+        elseif idx == 37 then
+            // [REAL] 0x25 Attack 1 interval/cooldown, writable. This map reads
+            // this, adds/subtracts a small delta (e.g. the index-81 threshold
+            // mechanic below nudges it by +/-.05 or +/-.1 directly), and writes
+            // it back - a plain field write, not a derived value, and the actual
+            // lever this map uses to change attack speed.
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 0, value)
         elseif idx == 81 then
-            // [LOCAL] 0x51 Rate of fire - see the Get side above
+            // [LOCAL] 0x51 Rate
+            // of fire. Some map scripts already apply the speed change 
+			// (via index 37, above) whenever this value crosses its own 
+			// >=3. threshold, so auto-applying BlzSetUnitAttackCooldown 
+			// here too stacks a second, redundant speed change on top of that.
+			// In which case the user will have to manually adjust this.
             call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9081, value)
+            call DzCompat_ExtStateEnsureAttackSpeedHook()
+            call DzCompat_ExtStateApplyAttackSpeed(whichUnit)
         else
-            // 21 (max damage), 22 (damage range) and 37 (cooldown) are derived/live
-            // reads on the Get side with no single field to write back to, and any
-            // other index is unmapped - writes to them are silently dropped here,
-            // same as an unconverted SetUnitState call would have done nothing
-            // useful in Reforged. Add a case above if a map needs one of these to
-            // actually stick.
+            // 21 (max damage) and 22 (damage range) are derived reads on the Get
+            // side with no single field to write back to, and any other index is
+            // unmapped - writes to them are silently dropped here, same as an
+            // unconverted SetUnitState call would have done nothing useful in
+            // Reforged. Add a case above if a map needs one of these to stick.
         endif
     endfunction
