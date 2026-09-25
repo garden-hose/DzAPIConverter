@@ -43,11 +43,11 @@
 //   0x60 / 0x61           As-target type / Type
 //
 // Only the indices this converter's target maps are known to actually use
-// are implemented below (decimal 18, 21, 22, 32, 37, 81 = hex 0x12, 0x15,
-// 0x16, 0x20, 0x25, 0x51). Add a case for any other index a map turns out to
-// need - unmapped indices fall through to a harmless 0 / no-op, exactly the
-// same silent failure they'd have had without this file, so adding this
-// library is always strictly an improvement, never a regression.
+// are implemented below (decimal 18, 20, 21, 22, 32, 37, 81 = hex 0x12,
+// 0x14, 0x15, 0x16, 0x20, 0x25, 0x51). Add a case for any other index a map
+// turns out to need - unmapped indices fall through to a harmless 0 / no-op,
+// exactly the same silent failure they'd have had without this file, so
+// adding this library is always strictly an improvement, never a regression.
 // ============================================================================
 
     globals
@@ -120,18 +120,36 @@
         call TriggerAddAction(gDzCompatExtStateAttackSpeedTrigger, function DzCompat_ExtStateAttackSpeedHandler)
     endfunction
 
+    // Reforged's weapon-range setter has an index/delta quirk: writing index 0
+    // alone does not reliably produce the requested weapon-1 range. Writing the
+    // delta through index 1 (newRange - r0 + r1) does on current builds. Also
+    // bumps acquisition range when the new attack range would otherwise exceed it.
+    function DzCompat_ExtStateSetAttackRange takes unit whichUnit, real newRange returns nothing
+        local real r0 = BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_RANGE, 0)
+        local real r1 = BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_RANGE, 1)
+        call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_RANGE, 1, newRange - r0 + r1)
+        if BlzGetUnitRealField(whichUnit, UNIT_RF_ACQUISITION_RANGE) < newRange then
+            call BlzSetUnitRealField(whichUnit, UNIT_RF_ACQUISITION_RANGE, newRange)
+        endif
+    endfunction
+
     function DzCompat_GetExtUnitState takes unit whichUnit, integer idx returns real
         if idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
             return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0))
+        elseif idx == 20 then
+            // [APPROX] 0x14 Attack 1 min damage - derived as base + dice
+            // (one pip per die), matching the object editor formula.
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0) + BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0))
         elseif idx == 21 then
             // [APPROX] 0x15 Attack 1 max damage - WC3 has no direct "max damage"
             // field; the object editor derives it as base + dice * sides, so
             // that's what's reproduced here.
             return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0) + (BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0) * BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0)))
         elseif idx == 22 then
-            // [APPROX] 0x16 Attack 1 damage range (max - base), same caveat as 21
-            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0) * BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0))
+            // [REAL] 0x16 Attack 1 range (weapon 1). Matches the UnitState.cpp
+            // table entry "range" - not dice*sides damage span.
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_RANGE, 0)
         elseif idx == 32 then
             // [REAL] 0x20 Armor
             return BlzGetUnitArmor(whichUnit)
@@ -157,9 +175,25 @@
     endfunction
 
     function DzCompat_SetExtUnitState takes unit whichUnit, integer idx, real value returns nothing
+        local integer dice
+        local integer sides
         if idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
             call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value))
+        elseif idx == 20 then
+            // [APPROX] 0x14 Attack 1 min damage - write by adjusting base so
+            // base + dice equals the requested minimum.
+            set dice = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0)
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value) - dice)
+        elseif idx == 21 then
+            // [APPROX] 0x15 Attack 1 max damage - write by adjusting base so
+            // base + dice * sides equals the requested maximum.
+            set dice = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0)
+            set sides = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0)
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value) - (dice * sides))
+        elseif idx == 22 then
+            // [REAL] 0x16 Attack 1 range - see DzCompat_ExtStateSetAttackRange
+            call DzCompat_ExtStateSetAttackRange(whichUnit, value)
         elseif idx == 32 then
             // [REAL] 0x20 Armor
             call BlzSetUnitArmor(whichUnit, value)
@@ -184,10 +218,8 @@
             call DzCompat_ExtStateEnsureAttackSpeedHook()
             call DzCompat_ExtStateApplyAttackSpeed(whichUnit)
         else
-            // 21 (max damage) and 22 (damage range) are derived reads on the Get
-            // side with no single field to write back to, and any other index is
-            // unmapped - writes to them are silently dropped here, same as an
-            // unconverted SetUnitState call would have done nothing useful in
-            // Reforged. Add a case above if a map needs one of these to stick.
+            // Any other index is unmapped - writes are silently dropped here,
+            // same as an unconverted SetUnitState call would have done nothing
+            // useful in Reforged. Add a case above if a map needs one to stick.
         endif
     endfunction
