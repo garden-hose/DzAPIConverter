@@ -41,7 +41,7 @@ final class ConverterConstants {
         // UnitEffect / Sync
         "DzSyncData", "DzSyncDataImmediately", "DzSyncBuffer", "DzTriggerRegisterSyncData",
         "DzGetTriggerSyncPrefix", "DzGetTriggerSyncData", "DzGetTriggerSyncPlayer", "DzExecuteFunc",
-        "DzGetMouseTerrainX", "DzGetMouseTerrainY",
+        "DzGetMouseTerrainX", "DzGetMouseTerrainY", "DzGetMouseTerrainZ", 
         "DzUnitChangeAlpha", "DzUnitDisableAttack", "DzUnitSilence", "DzUnitSetCanSelect", "DzUnitSetTargetable",
         "DzUnitSetMoveType",
         "DzGetItemAbility", "DzSetUnitName", "DzGetUnitCollisionSize", "DzGetUnitZ", "DzKillUnit",
@@ -133,7 +133,7 @@ final class ConverterConstants {
         "DzGetWheelDelta", "DzSetUnitModel", "DzGetMouseFocus", "DzTriggerRegisterMouseEventByCode", 
         "DzFrameSetUpdateCallbackByCode", "DzFrameSetUpdateCallback", "DzGetUnitUnderMouse",
 		"DzCompat_MouseLMBCondition", "DzCompat_MouseRMBCondition", "DzGetMouseX", "DzGetMouseY",
-		"DzGetMouseXRelative", "DzGetMouseYRelative",
+		"DzGetMouseXRelative", "DzGetMouseYRelative", "DzIsKeyDown", 
 		"DzTriggerRegisterMouseEventTrg", "DzTriggerRegisterMouseMoveEventTrg",
         // Trivial helpers + OSKEY conversion 
         "DzTriggerRegisterKeyEventTrg", "DzTriggerRegisterMouseWheelEventTrg",
