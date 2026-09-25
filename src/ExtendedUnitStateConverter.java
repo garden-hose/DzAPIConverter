@@ -82,7 +82,7 @@ final class ExtendedUnitStateConverter {
 
     /** Indices lib/DzCompat_ExtendedUnitState.j has a real/approximate case for. Kept in sync
      *  with that file by hand - update both when adding support for a new index. */
-    private static final TreeSet<Long> KNOWN_INDICES = new TreeSet<>(List.of(18L, 21L, 22L, 32L, 37L, 81L));
+    private static final TreeSet<Long> KNOWN_INDICES = new TreeSet<>(List.of(18L, 20L, 21L, 22L, 32L, 37L, 81L));
 
     static Result convert(List<String> inputLines) {
         List<String> lines = new ArrayList<>(inputLines);
