@@ -3,8 +3,8 @@
 // Input / model / frame-callback natives.
 //
 // Combines:
-//   - real implementations for key ByCode, mouse wheel stubs,
-//     DzSetUnitModel, DzFrameSetUpdateCallback*, DzGetMouseFocus
+//   - real implementations for key ByCode, mouse wheel via ConsoleUIBackdrop,
+//     DzSetUnitModel, DzFrameSetUpdateCallback*
 //   - the full architected string-based key + mouse-button event path that
 //     lived in the former DzCompat_InputEvents.j (DzTriggerRegisterKeyEvent,
 //     DzTriggerRegisterMouseEvent, DzGetTriggerKey, DzGetTriggerKeyPlayer)
@@ -14,9 +14,11 @@
 //                 DzGetTriggerKeyPlayer (built on real Blz* / EVENT_PLAYER_MOUSE_*)
 //   [APPROX]    DzSetUnitModel via BlzSetUnitSkin (string -> skin/rawcode id)
 //   [APPROX]    DzFrameSetUpdateCallbackByCode (30 Hz timer)
-//   [PORT LIMITATION]   DzGetWheelDelta / DzTriggerRegisterMouseWheelEvent* /
-//               DzGetMouseFocus (no full engine equivalent)
+//   [APPROX]    DzGetWheelDelta / DzTriggerRegisterMouseWheelEvent*
 //   [HELPER]    DzTriggerRegister*Trg 
+//
+//   DzGetMouseFocus lives in DzCompat_Frame.j (it needs the hover-registration path
+//   there); it is not defined in this file despite the name suggesting otherwise.
 // ============================================================================
 
 globals
@@ -52,24 +54,15 @@ globals
     framehandle gDzCompatWheelFrame = null
     boolean   gDzCompatWheelReady = false
     trigger   gDzCompatWheelTrig = null
-    hashtable gDzInputWheelReg             = InitHashtable()
-    hashtable gDzInputWheelRegCount        = InitHashtable()
+    hashtable gDzInputWheelReg = InitHashtable()
+    hashtable gDzInputWheelRegCount = InitHashtable()
     hashtable gDzInputWheelDispatcherReady = InitHashtable()
-	
-	// [FIXED] It used to register the moment DzTriggerRegisterMouseMoveEvent* was
-    // called - which, for a converted map, is very often straight from its own
-    // config/init function. Registering EVENT_PLAYER_MOUSE_MOVE (like frame hover
-    // events - see DzCompat_Frame.j) before the game has actually finished loading
-    // is a documented Reforged engine timing bug: the event silently never fires
-    // afterward. The real registration is now queued and flushed from a single
-    // 0-second timer instead, same fix as the hover one.
-    // sync is accepted for signature compatibility only.
     boolean gDzCompatMouseMoveDeferArmed = false
     boolean gDzCompatMouseMoveDeferReady = false
     trigger array gDzCompatMouseMoveDeferTrig
     integer gDzCompatMouseMoveDeferCount = 0
-
-    endglobals
+		
+endglobals
 
     // ========================================================================
     // Key events - ByCode
@@ -884,6 +877,15 @@ globals
     // EVENT_PLAYER_MOUSE_MOVE is real and synced between players (same event
     // used by DzCompat_EnsureMouseTracking for DzGetMouseTerrainX/Y).
     //
+    // It used to register the moment DzTriggerRegisterMouseMoveEvent* was
+    // called - which, for a converted map, is very often straight from its own
+    // config/init function. Registering EVENT_PLAYER_MOUSE_MOVE (like frame hover
+    // events - see DzCompat_Frame.j) before the game has actually finished loading
+    // is a documented Reforged engine timing bug: the event silently never fires
+    // afterward. The real registration is now queued and flushed from a single
+    // 0-second timer instead, same fix as the hover one.
+    // sync is accepted for signature compatibility only.
+
     function DzCompat_MouseMoveDeferFlush takes nothing returns nothing
         local integer i = 0
         local integer j
@@ -994,9 +996,17 @@ globals
     // Shared dispatcher: stash delta, then run every string-name callback
     // registered against any user trigger (and any ByCode actions that
     // piggy-back on the shared frame event via their own trigger).
+    // Was a plain R2I truncation (toward zero), so a fractional delta such as
+    // 0.9 rounded down to 0 and got silently dropped.
     function DzCompat_WheelSaveDelta takes nothing returns nothing
-        // Blizzard reports +120 / -120 style values; keep the raw integer.
-        set gDzCompatWheelDelta = R2I(BlzGetTriggerFrameValue())
+        local real v = BlzGetTriggerFrameValue()
+        if v > 0. then
+            set gDzCompatWheelDelta = R2I(v + .5)
+        elseif v < 0. then
+            set gDzCompatWheelDelta = R2I(v - .5)
+        else
+            set gDzCompatWheelDelta = 0
+        endif
     endfunction
 
     function DzCompat_WheelDispatch takes nothing returns nothing
@@ -1013,28 +1023,32 @@ globals
         // keeps delta fresh for DzGetWheelDelta callers that poll.)
     endfunction
 	
-    // Create a one-shot invisible full-screen frame used only as a wheel
-    // event target. LEVEL is high so it sits above the world, but it does
-    // not capture clicks (enable=false) so normal play is unaffected.
+    // Was a manually positioned invisible frame covering roughly the top-left
+    // 80% width x 60% height of the screen - anywhere outside that rectangle (notably
+    // most of the right and bottom edges) never saw a wheel event at all. Another Dz
+    // build instead registers FRAMEEVENT_MOUSE_WHEEL directly on "ConsoleUIBackdrop",
+    // Blizzard's own always-present, genuinely full-screen backdrop frame, with
+    // ORIGIN_FRAME_GAME_UI as its documented fallback if that lookup ever fails. Using
+    // the same real frame instead of a hand-sized guess gives true full-screen
+    // coverage at any resolution/aspect ratio, and needs no frame of our own at all.
     function DzCompat_EnsureWheelFrame takes nothing returns nothing
         if gDzCompatWheelReady then
             return
         endif
         set gDzCompatWheelReady = true
-        set gDzCompatWheelFrame = BlzCreateFrameByType("FRAME", "DzCompatWheelCatcher", BlzGetOriginFrame(ORIGIN_FRAME_GAME_UI, 0), "", 0)
-        call BlzFrameSetAbsPoint(gDzCompatWheelFrame, FRAMEPOINT_TOPLEFT, 0.0, 0.6)
-        call BlzFrameSetAbsPoint(gDzCompatWheelFrame, FRAMEPOINT_BOTTOMRIGHT, 0.8, 0.0)
-        call BlzFrameSetLevel(gDzCompatWheelFrame, 0)
-        call BlzFrameSetEnable(gDzCompatWheelFrame, false)
-        call BlzFrameSetVisible(gDzCompatWheelFrame, true)
+        set gDzCompatWheelFrame = BlzGetFrameByName("ConsoleUIBackdrop", 0)
+        if gDzCompatWheelFrame == null then
+            set gDzCompatWheelFrame = BlzGetOriginFrame(ORIGIN_FRAME_GAME_UI, 0)
+        endif
         set gDzCompatWheelTrig = CreateTrigger()
         call BlzTriggerRegisterFrameEvent(gDzCompatWheelTrig, gDzCompatWheelFrame, FRAMEEVENT_MOUSE_WHEEL)
         call TriggerAddAction(gDzCompatWheelTrig, function DzCompat_WheelDispatch)
     endfunction
 
-    // [APPROX] Register wheel on the caller's trigger via the catcher frame.
-    // sync is accepted for signature compatibility and ignored (frame events
-    // are inherently local to the client that scrolled).
+    // [APPROX] Register wheel on the caller's trigger via the ConsoleUIBackdrop catcher.
+    // sync is accepted for signature compatibility and ignored - it isn't a real choice
+    // (see the note above DzCompat_ClickGate in DzCompat_Frame.j: a frame event's
+    // condition/action already run on every client for every registrant).
     function DzTriggerRegisterMouseWheelEventByCode takes trigger whichTrigger, boolean sync, code funcHandle returns nothing
         if whichTrigger == null then
             set whichTrigger = CreateTrigger()

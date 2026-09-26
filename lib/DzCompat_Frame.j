@@ -43,7 +43,6 @@
 
         // Cached GameUI origin frame (see DzCompat_GetGameUI).
         framehandle gDzCompatGameUI = null
-
     	framehandle gDzStableParent = null
 
         // (frame id, event id) -> the trigger DzFrameSetScriptByCode built for it.
@@ -57,7 +56,7 @@
         // maps use 1 or 4 for "the frame was clicked". So both are registered, and the
         // gate below lets the first one through and drops its twin.
         boolexpr gDzCompatClickCond = null
-        // [FIXED] was a single (frame, time) pair shared by every player - see
+        // was a single (frame, time) pair shared by every player - see
         // DzCompat_ClickGate. Keyed fid -> playerId -> last-accepted-click time, so two
         // different players clicking the same shared frame within the window are told
         // apart instead of the second player's real click being dropped as if it were
@@ -72,7 +71,7 @@
         // DzCreateFrameByTagName falls back to GLUETEXTBUTTON for such a BUTTON.
         constant boolean DZCOMPAT_BUTTON_AS_GLUE_BUTTON = true
 
-		// ---- [FIXED] deferred hover registration -----------------------------------
+		// ---- deferred hover registration -----------------------------------
 		// FRAMEEVENT_MOUSE_ENTER/MOUSE_LEAVE silently never fire if the native
 		// registration happens before the game has actually finished loading - a
 		// documented Reforged engine timing bug. A converted map's own UI setup
@@ -81,13 +80,19 @@
 		// call is made from a single 0-second timer instead of at call time. Click and
 		// every other frame event are unaffected by this bug and keep registering
 		// immediately (see DzCompat_RegisterFrameEvents below).
-        boolean gDzCompatHoverDeferArmed = false
-        boolean gDzCompatHoverDeferReady = false
-        trigger array gDzCompatHoverDeferTrig
-        framehandle array gDzCompatHoverDeferFrame
-        integer array gDzCompatHoverDeferEvent
-        integer gDzCompatHoverDeferCount = 0
-
+		boolean gDzCompatHoverDeferArmed = false
+		boolean gDzCompatHoverDeferReady = false
+		trigger array gDzCompatHoverDeferTrig
+		framehandle array gDzCompatHoverDeferFrame
+		integer array gDzCompatHoverDeferEvent
+		integer gDzCompatHoverDeferCount = 0
+		// ---- DzGetMouseFocus -------------------------------------------------
+		// There's no native that reports a generic "focused UI element id"; this instead
+		// tracks the handle id of whichever hover-registered frame (see
+		// DzCompat_RegisterHoverEvent below) the mouse most recently entered, which is
+		// [APPROX] but real for exactly the frames a map wires up for hover - the only
+		// ones "focus" is ever likely to be asked about.
+		integer gDzCompatMouseFocusId = 0
     endglobals
 
     // ---- internal focus-tracking helper ----
@@ -601,7 +606,7 @@ endfunction
         return BlzFrameGetTextSizeLimit(f)
     endfunction
 
-    // [FIXED] The previous version treated align as ConvertTextAlignType's own two index
+    // The previous version treated align as ConvertTextAlignType's own two index
     // sets (0-2 vertical, 3-5 horizontal) - a reasonable-looking guess, but wrong: a real
     // converted map's own align values include 0, 6, 7 and 50, all outside that 0-5
     // range, so most calls were silently dropped by the old bounds check. A comparison
@@ -751,7 +756,7 @@ endfunction
     // Trigger condition for click registrations: passes the first click event of a frame
     // and rejects the twin event of the same click (see DZCOMPAT_CLICK_WINDOW).
     //
-    // [FIXED] Click events fire (and this condition runs) identically for every client,
+    // Click events fire (and this condition runs) identically for every client,
     // not just the clicking one - so the old single, player-less (frame, time) pair was
     // shared by everyone: if a second player clicked the SAME frame within the window
     // (a shared shop button, say), their real, separate click looked exactly like the
@@ -795,7 +800,7 @@ endfunction
     // Runs before the map's own callback for a click: hands the keyboard focus back. A
     // GLUETEXTBUTTON that keeps the focus after a click swallows the map's hotkeys.
     //
-    // [FIXED] Keyboard focus is a per-client UI concern - restoring it is only
+    // Keyboard focus is a per-client UI concern - restoring it is only
     // meaningful, and only safe, on the clicking player's own client. This used to run
     // unconditionally (for every client, since the click action itself runs for
     // everyone) and gated the toggle on BlzFrameGetEnable(f), which reads whatever that
@@ -815,6 +820,21 @@ endfunction
         endif
     endfunction
 
+    function DzCompat_MouseFocusEnter takes nothing returns nothing
+        local framehandle f = BlzGetTriggerFrame()
+        if f != null then
+            set gDzCompatMouseFocusId = GetHandleId(f)
+        endif
+    endfunction
+
+    function DzCompat_MouseFocusLeave takes nothing returns nothing
+        set gDzCompatMouseFocusId = 0
+    endfunction
+
+    function DzGetMouseFocus takes nothing returns integer
+        return gDzCompatMouseFocusId
+    endfunction
+
     // Dz event ids 1 (CONTROL_CLICK) and 4 (MOUSE_UP) both mean "the frame was clicked".
     function DzCompat_IsClickEvent takes integer eventId returns boolean
         return eventId == 1 or eventId == 4
@@ -831,6 +851,13 @@ endfunction
     endfunction
 
     function DzCompat_RegisterHoverEvent takes trigger trig, framehandle f, integer eventId returns nothing
+        // DzGetMouseFocus tracking (see above) - added ahead of the map's own
+        // callback action so gDzCompatMouseFocusId is already current by the time it runs.
+        if eventId == 2 then
+            call TriggerAddAction(trig, function DzCompat_MouseFocusEnter)
+        else
+            call TriggerAddAction(trig, function DzCompat_MouseFocusLeave)
+        endif
         if gDzCompatHoverDeferReady then
             call BlzTriggerRegisterFrameEvent(trig, f, DzCompat_ConvertFrameEvent(eventId))
             return
@@ -1015,6 +1042,19 @@ endfunction
     function DzGetWindowHeight takes nothing returns integer
         return BlzGetLocalClientHeight()
     endfunction
+
+    // [PORT LIMITATION] Reforged has no equivalent 4:3/16:9-style UI scale
+    function DzEnableWideScreen takes boolean enable returns nothing
+    endfunction
+
+    // [REAL] Swaps a unit's displayed model/stats-appearance to another unit type via
+    // BlzSetUnitSkin and updates the displayed name to match,
+	// since a skin change alone leaves the old name showing.
+    function DzSetUnitID takes unit whichUnit, integer id returns nothing
+        call BlzSetUnitSkin(whichUnit, id)
+        call BlzSetUnitName(whichUnit, GetObjectName(id))
+    endfunction
+
     // ---- [APPROX] checkbox state --------------------------------------------------
     // No dedicated checkbox native exists - Blizzard's own UI reuses the
     // generic Value field (0.0/1.0) for checkbox state, which is the standard
