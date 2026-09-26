@@ -1,66 +1,52 @@
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Bakes table\ability.ini's {@code _parent = "Aamk"} abilities into a lookup the converted
- * script can query at runtime, so {@code EXGet/SetAbilityDataReal} and
- * {@code EXGet/SetAbilityDataInteger} can tell data_type 108/109/110 (Data A/B/C) apart from
- * the same field ids on an unrelated ability - see DzCompat_YDWE_EX.j's
- * DzCompat_MarkAamkAbility/DzCompat_IsAamkAbility and the data_type 108/109/110 cases in the
- * four EX* functions above.
+ * Bakes table\ability.ini {@code _parent} values into a per-abilcode parent-id
+ * mark the converted script uses for DATA_A..I (data_type 108-116).
  *
- * <p>"Aamk" is the base ability commonly used across kk/dzapi-style maps to grant a raw,
- * uncapped Agility/Intelligence/Strength bonus (its Data A/B/C fields) without a visible
- * button (Data D = Hide Button). Reforged's Blz*AbilityIntegerLevelField constants are
- * generated per base-ability field layout rather than as one generic "Data A" slot valid for
- * every ability, so a plain data_type-only dispatch (as used for DUR/HERODUR/COOL/AREA/RNG)
- * would silently misroute field 108 on an ability that is not Aamk-derived - it only means
- * "Agility Bonus" for this one family. This registry, and the abilcode check the compat layer
- * makes against it, exist so that misrouting cannot happen: an ability not recognized here
- * keeps falling through to the pre-existing bookkeeping-only stub exactly as before.
+ * <p>One generated line per ability ({@code DzCompat_MarkAbilityParent}), not
+ * one line per data slot. The fourCC + int/real kind for each parent live in
+ * DzCompat_YDWE_EX.j ({@code DzCompat_GetAbilityDataField} /
+ * {@code DzCompat_GetAbilityDataFieldKind}); this class only assigns
+ * {@code abilcode -> parentId}. Parent ids must stay in sync with that JASS
+ * switch (1=Aamk, 2=ANcl, ...).
  *
- * <p>Same reasoning and shape as {@link AbilityHotkeyRegistry}: a small lookup baked once, at
- * conversion time, from the map's own object data.
- *
- * <p>LIMITATION: only abilities table\ability.ini actually lists are covered - a stock Aamk
- * instance the map never customized (no override recorded by W3x2lni) has no entry here and
- * is not recognized. In practice, an Aamk-derived ability is always a custom ability (Aamk
- * itself has Hide Button set and is not meant to be used un-cloned), so this should cover
- * every real use; if a map somehow reads/writes field 108-110 on an abilcode this misses, the
- * getter/setter simply falls back to the previous bookkeeping-only behavior rather than
- * misrouting to the wrong field.
+ * <p>Unknown parents are skipped so getters/setters keep bookkeeping-only
+ * behavior rather than writing the wrong Blz field.
  */
 final class AbilityDataFieldRegistry {
 
     private AbilityDataFieldRegistry() {}
 
-    /** Statements per generated chunk function (mirrors AbilityHotkeyRegistry/SlkTableRegistry). */
     private static final int STATEMENTS_PER_CHUNK = 200;
 
-    /** Name of the generated entry point; ForwardConverter hooks it into main(). */
-    static final String INIT_FUNCTION = "DzCompat_InitAamkAbilities";
-
-    private static final String AAMK_PARENT = "Aamk";
+    static final String INIT_FUNCTION = "DzCompat_InitAbilityDataFields";
 
     /**
-     * @return true when the script has any call that could reach the data_type 108/109/110
-     *         cases through EXGet/SetAbilityDataReal or EXGet/SetAbilityDataInteger. Unlike
-     *         AbilityHotkeyRegistry's scriptMayNeedHotkeys, this does not look for the field
-     *         id as a literal at the call site: maps commonly wrap these EX natives in their
-     *         own short helper (e.g. an "ex"/"er" pass-through that takes the field id as a
-     *         parameter), so the literal 108/109/110 usually appears only where that wrapper
-     *         is *called*, never next to the native name itself - a text scan tied to the
-     *         native name would miss it (a false negative, silently leaving the ability
-     *         un-fixed). Baking the (small) registry whenever the map references any of these
-     *         four natives at all is deliberately loose in the same spirit as
-     *         AbilityHotkeyRegistry's own scan: a false positive only costs a handful of
-     *         unused DzCompat_MarkAamkAbility calls.
+     * Parent rawcode (uppercased) -> parentId used by DzCompat_MarkAbilityParent
+     * and the JASS field/kind switches. Add new parents in both places.
      */
+    private static final Map<String, Integer> PARENT_IDS = new LinkedHashMap<>();
+    static {
+        PARENT_IDS.put("AAMK", 1);
+        PARENT_IDS.put("ANCL", 2);
+        PARENT_IDS.put("AHTB", 3);
+        PARENT_IDS.put("AHBZ", 4);
+        PARENT_IDS.put("AEME", 5);
+        PARENT_IDS.put("ACBF", 6);
+        PARENT_IDS.put("AIAZ", 7);
+        PARENT_IDS.put("AIDB", 8);
+        PARENT_IDS.put("AILZ", 9);
+        PARENT_IDS.put("AIMZ", 10);
+    }
+
     static boolean scriptMayNeedRegistry(Set<String> neededNames) {
         return neededNames.contains("EXGetAbilityDataReal") ||
                neededNames.contains("EXSetAbilityDataReal") ||
@@ -68,17 +54,11 @@ final class AbilityDataFieldRegistry {
                neededNames.contains("EXSetAbilityDataInteger");
     }
 
-    /**
-     * @param tableDir the folder resolved by {@link SlkTableRegistry#resolveTableFolder}
-     *                 (ability.ini, when present, lives next to the other table .ini files -
-     *                 same file AbilityHotkeyRegistry reads)
-     * @return the lines to emit (chunk functions + {@link #INIT_FUNCTION}), or empty when no
-     *         ability.ini was found or it had no _parent = "Aamk" entries
-     */
     static List<String> buildRegistry(Path tableDir, Logger logger) {
         Path file = findAbilityIni(tableDir, logger);
         if (file == null) {
-            log(logger, "ability.ini not found in " + tableDir + " - EXGet/SetAbilityDataReal/Integer data_type 108/109/110 stay stubbed for every ability");
+            log(logger, "ability.ini not found in " + tableDir +
+                    " - EXGet/SetAbilityDataReal/Integer data_type 108-116 stay bookkeeping-only");
             return List.of();
         }
         List<String> lines;
@@ -88,20 +68,38 @@ final class AbilityDataFieldRegistry {
             log(logger, "ERROR reading " + file + ": " + e.getMessage());
             return List.of();
         }
-        Set<String> aamkAbilities = new LinkedHashSet<>();
-        parse(lines, aamkAbilities);
-        if (aamkAbilities.isEmpty()) {
-            log(logger, file.getFileName() + ": no abilities with _parent = \"" + AAMK_PARENT + "\" found");
+
+        Map<String, String> abilParent = new LinkedHashMap<>();
+        parseParents(lines, abilParent);
+        if (abilParent.isEmpty()) {
+            log(logger, file.getFileName() + ": no ability sections with a _parent field found");
             return List.of();
         }
 
         List<String> statements = new ArrayList<>();
-        for (String abilcode : aamkAbilities) {
-            statements.add("    call DzCompat_MarkAamkAbility('" + abilcode + "')");
+        int mapped = 0;
+        int unknownParents = 0;
+        for (Map.Entry<String, String> e : abilParent.entrySet()) {
+            String abilcode = e.getKey();
+            Integer parentId = PARENT_IDS.get(e.getValue().toUpperCase(Locale.ROOT));
+            if (parentId == null) {
+                unknownParents++;
+                continue;
+            }
+            statements.add("    call DzCompat_MarkAbilityParent('" + abilcode + "', " + parentId + ")");
+            mapped++;
+        }
+
+        if (statements.isEmpty()) {
+            log(logger, file.getFileName() + ": " + abilParent.size() +
+                    " abilities with _parent, but none matched PARENT_IDS (" +
+                    unknownParents + " unknown parent(s)) - data_type 108-116 stay bookkeeping-only");
+            return List.of();
         }
 
         List<String> out = new ArrayList<>();
-        out.add("// ---- Aamk-derived ability lookup, baked from " + file.getFileName() + " (auto-generated) ----");
+        out.add("// ---- Ability DATA_A..I parent registry, baked from " + file.getFileName() +
+                " (auto-generated) ----");
         int chunkCount = (statements.size() + STATEMENTS_PER_CHUNK - 1) / STATEMENTS_PER_CHUNK;
         for (int c = 0; c < chunkCount; c++) {
             out.add("function " + INIT_FUNCTION + "_" + c + " takes nothing returns nothing");
@@ -114,13 +112,13 @@ final class AbilityDataFieldRegistry {
             out.add("    call ExecuteFunc(\"" + INIT_FUNCTION + "_" + c + "\")");
         }
         out.add("endfunction");
-        log(logger, "Baked " + aamkAbilities.size() + " Aamk-derived ability rawcode(s) from " + file.getFileName() +
-                    " in " + chunkCount + " init function(s), so EXGet/SetAbilityDataReal/Integer can grant real " +
-                    "Agility/Intelligence/Strength Bonus (data_type 108/109/110) for them");
+        log(logger, "Baked " + mapped + " ability parent mark(s) from " + file.getFileName() +
+                " in " + chunkCount + " init function(s) (" + unknownParents +
+                " ability(ies) had a _parent not in PARENT_IDS)");
         return out;
     }
 
-    private static Path findAbilityIni(Path tableDir, Logger logger) {
+    static Path findAbilityIni(Path tableDir, Logger logger) {
         Map<String, Path> files = SlkTableRegistry.listIniFiles(tableDir, logger);
         Path exact = files.get("ability.ini");
         if (exact != null) return exact;
@@ -131,8 +129,12 @@ final class AbilityDataFieldRegistry {
         return null;
     }
 
-    /** Reads [code] sections, keeping ids whose _parent equals "Aamk" (case-insensitive). */
-    private static void parse(List<String> lines, Set<String> aamkAbilities) {
+    // Use the real API (keep name matching the rest of the project):
+    private static Map<String, Path> SlekTableRegistry_listIniFiles(Path tableDir, Logger logger) {
+        return SlkTableRegistry.listIniFiles(tableDir, logger);
+    }
+
+    private static void parseParents(List<String> lines, Map<String, String> abilParent) {
         String current = null;
         int arrayDepth = 0;
         for (String raw : lines) {
@@ -159,8 +161,8 @@ final class AbilityDataFieldRegistry {
             if (current == null) continue;
             if (!key.equalsIgnoreCase("_parent")) continue;
             String value = SlkTableRegistry.parseValue(val);
-            if (value != null && value.equalsIgnoreCase(AAMK_PARENT)) {
-                aamkAbilities.add(current);
+            if (value != null && !value.isEmpty()) {
+                abilParent.put(current, value);
             }
         }
     }

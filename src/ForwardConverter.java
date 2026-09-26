@@ -199,19 +199,16 @@ final class ForwardConverter {
         // the table-folder prompt is shared between the two rather than asked twice.
         boolean needsHotkeyTable = neededNames.contains("EXGetAbilityDataInteger") &&
                                     AbilityHotkeyRegistry.scriptMayNeedHotkeys(jassScript);
-        // EXGet/SetAbilityDataReal/Integer's data_type 108/109/110 (Data A/B/C) cases: bake
-        // which abilcodes are Aamk-derived from the same folder's ability.ini - see
-        // AbilityDataFieldRegistry's class comment for why a text scan for the literal field
-        // id (as needsHotkeyTable does above) is not reliable here, so this instead keys off
-        // whether the script needs any of the four EX natives at all.
-        boolean needsAamkRegistry = AbilityDataFieldRegistry.scriptMayNeedRegistry(neededNames);
+		// EXGet/SetAbilityDataReal/Integer data_type 108-116 (DATA_A..I): bake
+        // parent→fourCC marks from ability.ini - see AbilityDataFieldRegistry.
+        boolean needsAbilityDataFieldRegistry = AbilityDataFieldRegistry.scriptMayNeedRegistry(neededNames);
         // DzSetUnitModel also draws on this folder (umdl field of unit.ini, see
         // SlkTableRegistry.buildUnitModelPathIndex), so it shares the prompt too
         // instead of asking for the table folder a second time.
         boolean needsUnitModelTable = neededNames.contains("DzSetUnitModel") ||
                                        ModelPathRegistry.scriptUsesDzSetUnitModel(jassScript);
         Path slkTableDir = null;
-        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable || needsAamkRegistry || needsUnitModelTable) {
+        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable || needsAbilityDataFieldRegistry || needsUnitModelTable) {
             slkTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
         }
         if (neededNames.contains("EXExecuteScript") && slkTableDir == null) {
@@ -252,18 +249,13 @@ final class ForwardConverter {
             }
         }
 
-        // EXGet/SetAbilityDataReal/Integer types 108/109/110: bake which abilcodes are
-        // Aamk-derived from ability.ini, same reasoning as the Hotkey/Researchhotkey bake
-        // above - the generated code calls DzCompat_MarkAamkAbility, which nothing in the
-        // library refers to on its own, so it has to be requested explicitly.
-        // DzCompat_IsAamkAbility needs no such request: it is called directly from
-        // EXGet/SetAbilityDataReal/Integer's own bodies, so the normal dependency closure
-        // picks it up once any of those four is needed.
-        List<String> aamkLines = Collections.emptyList();
-        if (slkTableDir != null && needsAamkRegistry) {
-            aamkLines = AbilityDataFieldRegistry.buildRegistry(slkTableDir, logger);
-            if (!aamkLines.isEmpty()) {
-                neededNames.add("DzCompat_MarkAamkAbility");
+		// EXGet/SetAbilityDataReal/Integer types 108-116: bake DATA_A..I fourCC/kind
+        // marks from ability.ini _parent via AbilityDataFieldRegistry.
+        List<String> abilityDataFieldLines = Collections.emptyList();
+        if (slkTableDir != null && needsAbilityDataFieldRegistry) {
+            abilityDataFieldLines = AbilityDataFieldRegistry.buildRegistry(slkTableDir, logger);
+            if (!abilityDataFieldLines.isEmpty()) {
+                neededNames.add("DzCompat_MarkAbilityParent");
             }
         }
 
@@ -408,11 +400,10 @@ final class ForwardConverter {
                     finalOutput.add("");
                     finalOutput.addAll(hotkeyLines);
                 }
-                // Same reasoning for the baked Aamk-derived ability data
-                // (calls DzCompat_MarkAamkAbility).
-                if (!aamkLines.isEmpty()) {
+                // Same reasoning for the baked ability data
+                if (!abilityDataFieldLines.isEmpty()) {
                     finalOutput.add("");
-                    finalOutput.addAll(aamkLines);
+                    finalOutput.addAll(abilityDataFieldLines);
                 }
                 continue;
             }
@@ -479,12 +470,12 @@ final class ForwardConverter {
             }
         }
 
-        // Same for the baked Aamk-derived ability data.
-        if (!aamkLines.isEmpty()) {
+        // Same for the baked ability data.
+        if (!abilityDataFieldLines.isEmpty()) {
             if (JassScript.injectStatementIntoMain(finalOutput,
                     "call ExecuteFunc(\"" + AbilityDataFieldRegistry.INIT_FUNCTION + "\")")) {
-                logger.log("[" + Timestamps.now() + "] Injected " + aamkLines.size() +
-                           " lines for the Aamk-derived ability data");
+                logger.log("[" + Timestamps.now() + "] Injected " + abilityDataFieldLines.size() +
+                           " lines for the ability data");
             } else {
                 logger.log("[" + Timestamps.now() + "] WARNING: function main not found - call " +
                            "ExecuteFunc(\"" + AbilityDataFieldRegistry.INIT_FUNCTION + "\") once at map init yourself");
