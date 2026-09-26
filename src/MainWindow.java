@@ -333,7 +333,7 @@ final class MainWindow {
             @Override
             protected Void doInBackground() {
                 try {
-                    new ForwardConverter(settings, new SwingUnitFilePrompt(frame), tablePrompt)
+                    new ForwardConverter(settings, tablePrompt)
                             .run(inPath, outPath, this::publish);
                 } catch (Exception ex) {
                     publish("ERROR: " + ex.getMessage());
