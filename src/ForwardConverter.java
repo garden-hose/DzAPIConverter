@@ -19,26 +19,27 @@ import java.util.Set;
 final class ForwardConverter {
 
     private final ConversionSettings settings;
-    private final UnitFilePrompt unitFilePrompt; // null in CLI mode
     private final SlkTablePrompt slkTablePrompt; // null in CLI mode
     private final NativeStubGenerator stubGenerator;
 
     /**
-     * @param settings       stub options (defaults are fine for CLI use)
-     * @param unitFilePrompt asks for an optional unit.ini/UnitStrings file; null = CLI mode
+     * @param settings stub options (defaults are fine for CLI use)
      */
-    ForwardConverter(ConversionSettings settings, UnitFilePrompt unitFilePrompt) {
-        this(settings, unitFilePrompt, null);
+    ForwardConverter(ConversionSettings settings) {
+        this(settings, null);
     }
 
     /**
-     * @param slkTablePrompt supplies the W3x2lni table folder used to bake EXExecuteScript
-     *                       (jass.slk) data; null (or a prompt that returns no folder, or a
-     *                       folder without table .ini files) = EXExecuteScript is not converted
+     * @param slkTablePrompt supplies the W3x2lni table folder ("Map table path") used to
+     *                       bake EXExecuteScript (jass.slk) data and, for DzSetUnitModel,
+     *                       to both read the map's own unit.ini umdl field and auto-load
+     *                       any unit.ini / *UnitStrings.txt catalog sitting in that same
+     *                       folder (see ModelPathRegistry); null (or a prompt that returns
+     *                       no folder, or a folder without table .ini files) = neither is
+     *                       converted / no catalog is loaded.
      */
-    ForwardConverter(ConversionSettings settings, UnitFilePrompt unitFilePrompt, SlkTablePrompt slkTablePrompt) {
+    ForwardConverter(ConversionSettings settings, SlkTablePrompt slkTablePrompt) {
         this.settings = settings;
-        this.unitFilePrompt = unitFilePrompt;
         this.slkTablePrompt = slkTablePrompt;
         this.stubGenerator = new NativeStubGenerator(settings);
     }
@@ -347,14 +348,15 @@ final class ForwardConverter {
         }
 
         // DzSetUnitModel path -> skin registry: the map's own object data (umdl field
-        // of the unit table, via SlkTableRegistry) is tried first, then the optional
-        // unit.ini / UnitStrings catalog fills in whatever is left. Built up front so
+        // of the unit table, via SlkTableRegistry) is tried first, then any unit.ini /
+        // *UnitStrings.txt catalog sitting in the same map table folder is auto-loaded
+        // (no prompt) to fill in whatever is left. Built up front so
         // DzCompat_InitModelPaths can be written near the top of the file (right after
         // the compat implementations that follow endglobals) instead of at the bottom.
         List<String> modelPathLines = Collections.emptyList();
         if (needsUnitModelTable) {
             Map<String, String> tableModelPaths = SlkTableRegistry.buildUnitModelPathIndex(slkTableDir, logger);
-            modelPathLines = ModelPathRegistry.buildRegistry(jassScript, unitFilePrompt, tableModelPaths, logger);
+            modelPathLines = ModelPathRegistry.buildRegistry(jassScript, slkTableDir, tableModelPaths, logger);
         }
 
         // Find first endglobals

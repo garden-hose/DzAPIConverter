@@ -14,8 +14,8 @@ import java.util.regex.Pattern;
 
 /**
  * DzSetUnitModel path -> skin registry: detects model paths used by DzSetUnitModel
- * calls, optionally resolves skin ids from a unit.ini / UnitStrings file, and
- * generates the DzCompat_InitModelPaths function.
+ * calls, resolves skin ids from the map's own unit.ini / any *UnitStrings.txt found
+ * in the map table folder, and generates the DzCompat_InitModelPaths function.
  */
 final class ModelPathRegistry {
 
@@ -156,10 +156,57 @@ final class ModelPathRegistry {
     }
     
 
+    /** Catalog file names to auto-load from the map table folder, besides unit.ini itself. */
+    private static final String UNIT_STRINGS_SUFFIX = "unitstrings.txt";
+
+    /**
+     * Automatically collect the unit.ini / *UnitStrings.txt catalog file(s) sitting in
+     * the map table folder (no prompt): the map's own unit.ini (in case it also
+     * carries the [id]/file= skin-catalog shape) plus every file whose name ends in
+     * "UnitStrings.txt", case-insensitive. Parsed in the order returned by the
+     * directory listing; a path already resolved by an earlier file is left alone.
+     *
+     * @param tableDir the map table folder (same one used for the umdl lookup and the
+     *                 EXExecuteScript bake), or null when there is none
+     * @return path -> skin id, merged across every catalog file found; empty (never
+     *         null) when tableDir is null or no matching file is found
+     */
+    private static Map<String, String> loadCatalogFromTableFolder(Path tableDir, Logger logger) {
+        Map<String, String> pathToSkin = new LinkedHashMap<>();
+        if (tableDir == null) {
+            return pathToSkin;
+        }
+        Map<String, Path> files = SlkTableRegistry.listIniFiles(tableDir, logger);
+        List<Path> catalogFiles = new ArrayList<>();
+        Path unitIni = files.get("unit.ini");
+        if (unitIni != null) {
+            catalogFiles.add(unitIni);
+        }
+        for (Map.Entry<String, Path> e : files.entrySet()) {
+            if (e.getKey().endsWith(UNIT_STRINGS_SUFFIX)) {
+                catalogFiles.add(e.getValue());
+            }
+        }
+        for (Path file : catalogFiles) {
+            try {
+                for (Map.Entry<String, String> e : parseUnitModelFile(file, logger).entrySet()) {
+                    pathToSkin.putIfAbsent(e.getKey(), e.getValue());
+                }
+            } catch (IOException e) {
+                logger.log("[" + Timestamps.now() + "] ERROR reading unit data: " + e.getMessage());
+            }
+        }
+        return pathToSkin;
+    }
+
     /**
      * After conversion: if DzSetUnitModel is present, resolve model paths to skin ids
      * and emit DzCompat_RegisterModelPath calls wrapped in DzCompat_InitModelPaths.
      *
+     * @param tableDir        the map table folder ("Map table path"), or null when
+     *                        there is none; used both to read tableModelPaths' umdl
+     *                        source and, here, to auto-load a unit.ini / *UnitStrings.txt
+     *                        catalog with no prompt (see {@link #loadCatalogFromTableFolder}).
      * @param tableModelPaths model path -> unit rawcode, from
      *                        {@link SlkTableRegistry#buildUnitModelPathIndex} (the umdl
      *                        field of this map's own unit table). Every rawcode it
@@ -167,33 +214,14 @@ final class ModelPathRegistry {
      *                        always a valid BlzSetUnitSkin skinId; checked first. May be
      *                        empty (no table folder, no unit.ini, no umdl matches) -
      *                        never null.
-     * @param prompt          optionally loads a unit.ini / UnitStrings catalog (null in
-     *                        CLI mode) as a fallback for paths that belong to no unit
-     *                        type in the map's own data (e.g. an official alt-skin the
-     *                        map only ever names by string).
      */
-    static List<String> buildRegistry(List<String> jassScript, UnitFilePrompt prompt,
+    static List<String> buildRegistry(List<String> jassScript, Path tableDir,
                                        Map<String, String> tableModelPaths, Logger logger) {
         LinkedHashSet<String> scriptPaths = extractDzSetUnitModelPaths(jassScript);
         logger.log("[" + Timestamps.now() + "] DzSetUnitModel detected; found " +
                    scriptPaths.size() + " model path literal(s) in script");
 
-        Path unitDataFile = null;
-        if (prompt != null) {
-            unitDataFile = prompt.requestUnitDataFile();
-        } else if (tableModelPaths.isEmpty()) {
-            logger.log("[" + Timestamps.now() + "] CLI mode: writing empty skin ids for DzSetUnitModel paths");
-        }
-
-
-        Map<String, String> pathToSkin = new LinkedHashMap<>();
-        if (unitDataFile != null) {
-            try {
-                pathToSkin.putAll(parseUnitModelFile(unitDataFile, logger));
-            } catch (IOException e) {
-                logger.log("[" + Timestamps.now() + "] ERROR reading unit data: " + e.getMessage());
-            }
-        }
+        Map<String, String> pathToSkin = loadCatalogFromTableFolder(tableDir, logger);
 
         // Only paths that are actually passed to DzSetUnitModel are registered; every
         // other model path in either source is ignored. The map's own object data
@@ -212,7 +240,7 @@ final class ModelPathRegistry {
         if (fromTable > 0 || fromCatalog > 0) {
             logger.log("[" + Timestamps.now() + "] Model path -> skin id: " + fromTable +
                        " resolved from this map's own object data (umdl)" +
-                       (fromCatalog > 0 ? ", " + fromCatalog + " from " + unitDataFile.getFileName() : ""));
+                       (fromCatalog > 0 ? ", " + fromCatalog + " from the map table folder's unit.ini/UnitStrings.txt" : ""));
         }
         LinkedHashSet<String> pathsToRegister = new LinkedHashSet<>(scriptPaths);
 
