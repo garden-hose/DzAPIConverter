@@ -32,7 +32,7 @@ public class DzApiConverter {
                         Path tableFolder = Paths.get(args[2]);
                         tables = suggested -> tableFolder;
                     }
-                    new ForwardConverter(new ConversionSettings(), null, tables)
+                    new ForwardConverter(new ConversionSettings(), tables)
                             .run(args[0], args[1], msg -> System.out.println(msg));
                 }
             } catch (Exception e) {
