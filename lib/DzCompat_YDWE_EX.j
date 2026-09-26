@@ -71,6 +71,11 @@
         // before this table existed) when ability.ini has no Aamk-parented abilities, or
         // when no ability.ini was supplied.
         hashtable gYDWEEXAamk = InitHashtable()
+        // abilcode -> parentId for DATA_A..I (108-116). Baked by
+        // AbilityDataFieldRegistry as DzCompat_MarkAbilityParent calls.
+        // ParentId values must match the switch in DzCompat_GetAbilityDataField
+        // / DzCompat_GetAbilityDataFieldKind (1=Aamk, 2=ANcl, ...).
+        hashtable gYDWEEXAbilityParent = InitHashtable()
         // persistent per-itemcode work-item cache (see YDWEEX_GetCachedWorkItem)
         // - kept separate from gYDWEEXOwner/gYDWEEXLocal because it deliberately
         // uses a fixed parent key with itemcode as the child key, and mixing a
@@ -277,90 +282,211 @@
         return true
     endfunction
 
-    // ============================================================================
-    // Ability level data - Real / Integer / String
-    // ============================================================================
+    // ========================================================================
+    // Ability DATA_A..I field registry (data_type 108-116) — parent-id form
+    // ========================================================================
+    // One mark per abilcode (parent family). fourCC + kind live in the switches
+    // below so conversion does not emit thousands of per-slot lines.
+    //
+    // parentId:
+    //   1  Aamk   2  ANcl   3  AHtb   4  AHbz   5  AEme
+    //   6  ACbf   7  AIaz   8  AIdb   9  AIlz  10  AImz
 
-    // ---- Aamk ability-family recognition -------------------------------------
-    // Populated by DzCompat_InitAamkAbilities, generated at conversion time from
-    // table\ability.ini by AbilityDataFieldRegistry (mirrors how
-    // AbilityHotkeyRegistry bakes Hotkey/Researchhotkey above). An ability whose
-    // _parent is "Aamk" grants raw Agility/Intelligence/Strength bonuses through
-    // its Data A/B/C fields - see EXGetAbilityDataReal/Integer and
-    // EXSetAbilityDataReal/Integer below for the data_type 108/109/110 cases
-    // that depend on this.
-    function DzCompat_MarkAamkAbility takes integer abilcode returns nothing
-        call SaveBoolean(gYDWEEXAamk, abilcode, 0, true)
+    function DzCompat_MarkAbilityParent takes integer abilcode, integer parentId returns nothing
+        call SaveInteger(gYDWEEXAbilityParent, abilcode, 0, parentId)
     endfunction
 
-    function DzCompat_IsAamkAbility takes integer abilcode returns boolean
-        return HaveSavedBoolean(gYDWEEXAamk, abilcode, 0) and LoadBoolean(gYDWEEXAamk, abilcode, 0)
+    function DzCompat_GetAbilityParentId takes integer abilcode returns integer
+        if abilcode == 0 then
+            return 0
+        endif
+        return LoadInteger(gYDWEEXAbilityParent, abilcode, 0)
     endfunction
 
-    // ---- [REAL] DUR/HERODUR/COOL/AREA/RNG, reusing the same field constants
-    // already verified in DzCompat_AbilityField.j for the equivalent Dz natives.
-    // [REAL, via DzCompat_IsAamkAbility] DATA_A/B/C on an ability marked as
-    // Aamk-derived (see above) - these three are the only generic Data fields
-    // with a confirmed, unambiguous Reforged field name, and only for that one
-    // family. [PORT LIMITATION] CAST (no generic cast-time field) and DATA_A..I
-    // on any other ability (no confirmed generic "Data A..I" level-field names
-    // in Reforged that would apply to an arbitrary ability) - bookkeeping only.
-    function EXGetAbilityDataReal takes ability abil, integer level, integer data_type returns real
-        local integer idx = level - 1
-        if idx < 0 then
-            set idx = 0
+    // Returns the Object Editor fourCC for this abilcode+data_type, or 0 if
+    // the ability was not marked / slot is unused for that parent.
+    function DzCompat_GetAbilityDataField takes integer abilcode, integer data_type returns integer
+        local integer parentId = DzCompat_GetAbilityParentId(abilcode)
+        if parentId == 1 then
+            // Aamk
+            if data_type == 108 then
+                return 'Iagi'
+            elseif data_type == 109 then
+                return 'Iint'
+            elseif data_type == 110 then
+                return 'Istr'
+            endif
+        elseif parentId == 2 then
+            // ANcl
+            if data_type == 108 then
+                return 'Ncl1'
+            elseif data_type == 109 then
+                return 'Ncl2'
+            elseif data_type == 110 then
+                return 'Ncl3'
+            elseif data_type == 111 then
+                return 'Ncl4'
+            elseif data_type == 112 then
+                return 'Ncl5'
+            elseif data_type == 113 then
+                return 'Ncl6'
+            endif
+        elseif parentId == 3 then
+            // AHtb
+            if data_type == 108 then
+                return 'Htb1'
+            endif
+        elseif parentId == 4 then
+            // AHbz
+            if data_type == 108 then
+                return 'Hbz1'
+            elseif data_type == 109 then
+                return 'Hbz2'
+            elseif data_type == 110 then
+                return 'Hbz3'
+            elseif data_type == 111 then
+                return 'Hbz4'
+            elseif data_type == 112 then
+                return 'Hbz5'
+            elseif data_type == 113 then
+                return 'Hbz6'
+            endif
+        elseif parentId == 5 then
+            // AEme
+            if data_type == 108 then
+                return 'Eme1'
+            elseif data_type == 109 then
+                return 'Eme2'
+            elseif data_type == 110 then
+                return 'Eme3'
+            elseif data_type == 111 then
+                return 'Eme4'
+            elseif data_type == 112 then
+                return 'Eme5'
+            endif
+        elseif parentId == 6 then
+            // ACbf
+            if data_type == 108 then
+                return 'Cbf1'
+            endif
+        elseif parentId == 7 then
+            // AIaz
+            if data_type == 108 then
+                return 'Iaz1'
+            endif
+        elseif parentId == 8 then
+            // AIdb
+            if data_type == 108 then
+                return 'Idb1'
+            endif
+        elseif parentId == 9 then
+            // AIlz
+            if data_type == 108 then
+                return 'Ilz1'
+            endif
+        elseif parentId == 10 then
+            // AImz
+            if data_type == 108 then
+                return 'Imz1'
+            endif
         endif
-		if data_type == 101 then //ABILITY_DATA_CAST
-            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_CASTING_TIME, idx)
-        elseif data_type == 102 then //ABILITY_DATA_DUR
-            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_NORMAL, idx)
-        elseif data_type == 103 then //ABILITY_DATA_HERODUR
-            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_HERO, idx)
-        elseif data_type == 105 then //ABILITY_DATA_COOL
-            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_COOLDOWN, idx)
-        elseif data_type == 106 then //ABILITY_DATA_AREA
-            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_AREA_OF_EFFECT, idx)
-        elseif data_type == 107 then //ABILITY_DATA_RNG
-            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_CAST_RANGE, idx)
-        elseif data_type == 108 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_A - Aamk Agility Bonus
-            return I2R(BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_AGILITY_BONUS, idx))
-        elseif data_type == 109 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_B - Aamk Intelligence Bonus
-            return I2R(BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_INTELLIGENCE_BONUS, idx))
-        elseif data_type == 110 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_C - Aamk Strength Bonus
-            return I2R(BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_STRENGTH_BONUS_ISTR, idx))
-        endif
-        return LoadReal(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level)
+        return 0
     endfunction
 
-    function EXSetAbilityDataReal takes ability abil, integer level, integer data_type, real value returns boolean
-        local integer idx = level - 1
-        if idx < 0 then
-            set idx = 0
+    // 0 = integer level field, 1 = real level field. Only meaningful when
+    // DzCompat_GetAbilityDataField returned a non-zero fourCC.
+    function DzCompat_GetAbilityDataFieldKind takes integer abilcode, integer data_type returns integer
+        local integer parentId = DzCompat_GetAbilityParentId(abilcode)
+        if parentId == 1 then
+            // Aamk — all int
+            return 0
+        elseif parentId == 2 then
+            // ANcl: A,B real; C,D int; E,F real
+            if data_type == 110 or data_type == 111 then
+                return 0
+            endif
+            return 1
+        elseif parentId == 3 then
+            return 1
+        elseif parentId == 4 then
+            // AHbz: A,C int; B,D,E,F real
+            if data_type == 108 or data_type == 110 then
+                return 0
+            endif
+            return 1
+        elseif parentId == 5 then
+            // AEme: A,B int; C,D,E real
+            if data_type == 108 or data_type == 109 then
+                return 0
+            endif
+            return 1
+        elseif parentId == 6 then
+            return 1
+        elseif parentId == 7 then
+            return 0
+        elseif parentId == 8 then
+            return 0
+        elseif parentId == 9 then
+            return 1
+        elseif parentId == 10 then
+            return 1
         endif
-        if data_type == 101 then //ABILITY_DATA_CAST
-            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_CASTING_TIME, idx, value)
-        elseif data_type == 102 then //ABILITY_DATA_DUR
-            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_NORMAL, idx, value)
-        elseif data_type == 103 then //ABILITY_DATA_HERODUR
-            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_HERO, idx, value)
-        elseif data_type == 105 then //ABILITY_DATA_COOL
-            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_COOLDOWN, idx, value)
-        elseif data_type == 106 then //ABILITY_DATA_AREA
-            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_AREA_OF_EFFECT, idx, value)
-        elseif data_type == 107 then //ABILITY_DATA_RNG
-            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_CAST_RANGE, idx, value)
-        elseif data_type == 108 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_A - Aamk Agility Bonus
-            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_AGILITY_BONUS, idx, R2I(value))
-        elseif data_type == 109 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_B - Aamk Intelligence Bonus
-            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_INTELLIGENCE_BONUS, idx, R2I(value))
-        elseif data_type == 110 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_C - Aamk Strength Bonus
-            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_STRENGTH_BONUS_ISTR, idx, R2I(value))
-        endif
-        call SaveReal(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level, value)
-        return true
+        return 0
     endfunction
 
-    // ---- [REAL] COST (mana cost). [PORT LIMITATION] TARGS/UNITID -----------------
+    function DzCompat_TryGetAbilityDataReal takes ability abil, integer abilcode, integer idx, integer data_type returns real
+        local integer fieldId = DzCompat_GetAbilityDataField(abilcode, data_type)
+        local integer kind
+        if fieldId == 0 then
+            return 0.00
+        endif
+        set kind = DzCompat_GetAbilityDataFieldKind(abilcode, data_type)
+        if kind == 1 then
+            return BlzGetAbilityRealLevelField(abil, ConvertAbilityRealLevelField(fieldId), idx)
+        endif
+        return I2R(BlzGetAbilityIntegerLevelField(abil, ConvertAbilityIntegerLevelField(fieldId), idx))
+    endfunction
+
+    function DzCompat_TrySetAbilityDataReal takes ability abil, integer abilcode, integer idx, integer data_type, real value returns boolean
+        local integer fieldId = DzCompat_GetAbilityDataField(abilcode, data_type)
+        local integer kind
+        if fieldId == 0 then
+            return false
+        endif
+        set kind = DzCompat_GetAbilityDataFieldKind(abilcode, data_type)
+        if kind == 1 then
+            return BlzSetAbilityRealLevelField(abil, ConvertAbilityRealLevelField(fieldId), idx, value)
+        endif
+        return BlzSetAbilityIntegerLevelField(abil, ConvertAbilityIntegerLevelField(fieldId), idx, R2I(value))
+    endfunction
+
+    function DzCompat_TryGetAbilityDataInteger takes ability abil, integer abilcode, integer idx, integer data_type returns integer
+        local integer fieldId = DzCompat_GetAbilityDataField(abilcode, data_type)
+        local integer kind
+        if fieldId == 0 then
+            return 0
+        endif
+        set kind = DzCompat_GetAbilityDataFieldKind(abilcode, data_type)
+        if kind == 1 then
+            return R2I(BlzGetAbilityRealLevelField(abil, ConvertAbilityRealLevelField(fieldId), idx))
+        endif
+        return BlzGetAbilityIntegerLevelField(abil, ConvertAbilityIntegerLevelField(fieldId), idx)
+    endfunction
+
+    function DzCompat_TrySetAbilityDataInteger takes ability abil, integer abilcode, integer idx, integer data_type, integer value returns boolean
+        local integer fieldId = DzCompat_GetAbilityDataField(abilcode, data_type)
+        local integer kind
+        if fieldId == 0 then
+            return false
+        endif
+        set kind = DzCompat_GetAbilityDataFieldKind(abilcode, data_type)
+        if kind == 1 then
+            return BlzSetAbilityRealLevelField(abil, ConvertAbilityRealLevelField(fieldId), idx, I2R(value))
+        endif
+        return BlzSetAbilityIntegerLevelField(abil, ConvertAbilityIntegerLevelField(fieldId), idx, value)
+    endfunction
+	
+	// ---- [REAL] COST (mana cost). [PORT LIMITATION] TARGS/UNITID -----------------
     // ---- Hotkey / Researchhotkey lookup (which: 0 = Hotkey, 1 = Researchhotkey) --------
     // Populated by AbilityHotkeyRegistry's generated DzCompat_InitHotkey; called from
     // EXGetAbilityDataInteger below. An ability with no entry (never customized in
@@ -376,41 +502,103 @@
         endif
         return LoadInteger(gYDWEEXHotkey, abilcode, which)
     endfunction
+	
+	// ============================================================================
+    // Ability level data - Real / Integer / String
+    // ============================================================================
 
-    function EXGetAbilityDataInteger takes ability abil, integer level, integer data_type returns integer
+	// ---- [REAL] CAST/DUR/HERODUR/COOL/AREA/RNG via fixed Blz level fields.
+    // [REAL, via registry] DATA_A..I (108-116) when AbilityDataFieldRegistry
+    // baked a fourCC for this abilcode; otherwise local bookkeeping only.
+    function EXGetAbilityDataReal takes ability abil, integer level, integer data_type returns real
         local integer idx = level - 1
+        local integer abilcode
+        if idx < 0 then
+            set idx = 0
+        endif
+        if data_type == 101 then //ABILITY_DATA_CAST
+            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_CASTING_TIME, idx)
+        elseif data_type == 102 then //ABILITY_DATA_DUR
+            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_NORMAL, idx)
+        elseif data_type == 103 then //ABILITY_DATA_HERODUR
+            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_HERO, idx)
+        elseif data_type == 105 then //ABILITY_DATA_COOL
+            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_COOLDOWN, idx)
+        elseif data_type == 106 then //ABILITY_DATA_AREA
+            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_AREA_OF_EFFECT, idx)
+        elseif data_type == 107 then //ABILITY_DATA_RNG
+            return BlzGetAbilityRealLevelField(abil, ABILITY_RLF_CAST_RANGE, idx)
+        elseif data_type >= 108 and data_type <= 116 then //ABILITY_DATA_DATA_A..I
+            set abilcode = YDWEEX_GetAbilityCode(abil)
+            if DzCompat_GetAbilityDataField(abilcode, data_type) != 0 then
+                return DzCompat_TryGetAbilityDataReal(abil, abilcode, idx, data_type)
+            endif
+        endif
+        return LoadReal(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level)
+    endfunction
+
+	function EXSetAbilityDataReal takes ability abil, integer level, integer data_type, real value returns boolean
+        local integer idx = level - 1
+        local integer abilcode
+        if idx < 0 then
+            set idx = 0
+        endif
+        if data_type == 101 then //ABILITY_DATA_CAST
+            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_CASTING_TIME, idx, value)
+        elseif data_type == 102 then //ABILITY_DATA_DUR
+            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_NORMAL, idx, value)
+        elseif data_type == 103 then //ABILITY_DATA_HERODUR
+            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_DURATION_HERO, idx, value)
+        elseif data_type == 105 then //ABILITY_DATA_COOL
+            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_COOLDOWN, idx, value)
+        elseif data_type == 106 then //ABILITY_DATA_AREA
+            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_AREA_OF_EFFECT, idx, value)
+        elseif data_type == 107 then //ABILITY_DATA_RNG
+            return BlzSetAbilityRealLevelField(abil, ABILITY_RLF_CAST_RANGE, idx, value)
+        elseif data_type >= 108 and data_type <= 116 then //ABILITY_DATA_DATA_A..I
+            set abilcode = YDWEEX_GetAbilityCode(abil)
+            if DzCompat_TrySetAbilityDataReal(abil, abilcode, idx, data_type, value) then
+                return true
+            endif
+        endif
+        call SaveReal(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level, value)
+        return true
+    endfunction
+
+	function EXGetAbilityDataInteger takes ability abil, integer level, integer data_type returns integer
+        local integer idx = level - 1
+        local integer abilcode
         if idx < 0 then
             set idx = 0
         endif
         if data_type == 104 then //ABILITY_DATA_COST
             return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_MANA_COST, idx)
-        elseif data_type == 108 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_A - Aamk Agility Bonus
-            return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_AGILITY_BONUS, idx)
-        elseif data_type == 109 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_B - Aamk Intelligence Bonus
-            return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_INTELLIGENCE_BONUS, idx)
-        elseif data_type == 110 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_C - Aamk Strength Bonus
-            return BlzGetAbilityIntegerLevelField(abil, ABILITY_ILF_STRENGTH_BONUS_ISTR, idx)
         elseif data_type == 200 then //ABILITY_DATA_HOTKET - not leveled; baked from ability.ini
             return DzCompat_HotkeyGet(YDWEEX_GetAbilityCode(abil), 0)
         elseif data_type == 202 then //ABILITY_DATA_RESEARCH_HOTKEY - not leveled; baked from ability.ini
             return DzCompat_HotkeyGet(YDWEEX_GetAbilityCode(abil), 1)
+        elseif data_type >= 108 and data_type <= 116 then //ABILITY_DATA_DATA_A..I
+            set abilcode = YDWEEX_GetAbilityCode(abil)
+            if DzCompat_GetAbilityDataField(abilcode, data_type) != 0 then
+                return DzCompat_TryGetAbilityDataInteger(abil, abilcode, idx, data_type)
+            endif
         endif
         return LoadInteger(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level)
     endfunction
 
-    function EXSetAbilityDataInteger takes ability abil, integer level, integer data_type, integer value returns boolean
+	function EXSetAbilityDataInteger takes ability abil, integer level, integer data_type, integer value returns boolean
         local integer idx = level - 1
+        local integer abilcode
         if idx < 0 then
             set idx = 0
         endif
         if data_type == 104 then //ABILITY_DATA_COST
             return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_MANA_COST, idx, value)
-        elseif data_type == 108 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_A - Aamk Agility Bonus
-            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_AGILITY_BONUS, idx, value)
-        elseif data_type == 109 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_B - Aamk Intelligence Bonus
-            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_INTELLIGENCE_BONUS, idx, value)
-        elseif data_type == 110 and DzCompat_IsAamkAbility(YDWEEX_GetAbilityCode(abil)) then //ABILITY_DATA_C - Aamk Strength Bonus
-            return BlzSetAbilityIntegerLevelField(abil, ABILITY_ILF_STRENGTH_BONUS_ISTR, idx, value)
+        elseif data_type >= 108 and data_type <= 116 then //ABILITY_DATA_DATA_A..I
+            set abilcode = YDWEEX_GetAbilityCode(abil)
+            if DzCompat_TrySetAbilityDataInteger(abil, abilcode, idx, data_type, value) then
+                return true
+            endif
         endif
         call SaveInteger(gYDWEEXLocal, GetHandleId(abil), data_type * 100 + level, value)
         return true
