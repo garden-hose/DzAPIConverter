@@ -516,11 +516,11 @@ final class ForwardConverter {
         // Runs after a successful script conversion. Uses the same Map table path when already
         // resolved; otherwise tries once more so the fix still runs when the script never needed
         // EXExecuteScript / hotkeys / DzSetUnitModel.
-        Path parentFixTableDir = slkTableDir;
-        if (parentFixTableDir == null) {
-            parentFixTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
-        }
-        AIs2ParentFixer.fix(parentFixTableDir, logger);
+        //Path parentFixTableDir = slkTableDir;
+        //if (parentFixTableDir == null) {
+        //    parentFixTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
+        //}
+        //AIs2ParentFixer.fix(parentFixTableDir, logger);
 
         if (!unknownNatives.isEmpty()) {
             // De-dupe while preserving order for a cleaner log
