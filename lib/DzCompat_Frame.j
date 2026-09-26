@@ -41,10 +41,6 @@
         hashtable gDzCompatFuncTriggers = InitHashtable()
         hashtable gDzCompatFocusTrack = InitHashtable()
 
-        // Per frame: the vertical (child 1) and horizontal (child 2) text alignment last set
-        // through DzFrameSetTextAlignment, as ConvertTextAlignType indices (see there).
-        hashtable gDzCompatTextAlign = InitHashtable()
-
         // Cached GameUI origin frame (see DzCompat_GetGameUI).
         framehandle gDzCompatGameUI = null
 
@@ -61,8 +57,12 @@
         // maps use 1 or 4 for "the frame was clicked". So both are registered, and the
         // gate below lets the first one through and drops its twin.
         boolexpr gDzCompatClickCond = null
-        integer gDzCompatClickFrame = 0
-        real gDzCompatClickAt = 0.
+        // [FIXED] was a single (frame, time) pair shared by every player - see
+        // DzCompat_ClickGate. Keyed fid -> playerId -> last-accepted-click time, so two
+        // different players clicking the same shared frame within the window are told
+        // apart instead of the second player's real click being dropped as if it were
+        // the first player's CONTROL_CLICK/MOUSE_UP twin.
+        hashtable gDzCompatClickTimes = InitHashtable()
         timer gDzCompatClickClock = null
         // Two click events for the same frame closer together than this are one click.
         constant real DZCOMPAT_CLICK_WINDOW = 0.20
@@ -71,6 +71,22 @@
         // Reforged (it still reports mouse enter/leave); GLUETEXTBUTTON does. When true,
         // DzCreateFrameByTagName falls back to GLUETEXTBUTTON for such a BUTTON.
         constant boolean DZCOMPAT_BUTTON_AS_GLUE_BUTTON = true
+
+		// ---- [FIXED] deferred hover registration -----------------------------------
+		// FRAMEEVENT_MOUSE_ENTER/MOUSE_LEAVE silently never fire if the native
+		// registration happens before the game has actually finished loading - a
+		// documented Reforged engine timing bug. A converted map's own UI setup
+		// frequently runs from its config/init function, which is exactly that window,
+		// so hover registration is queued here and the real BlzTriggerRegisterFrameEvent
+		// call is made from a single 0-second timer instead of at call time. Click and
+		// every other frame event are unaffected by this bug and keep registering
+		// immediately (see DzCompat_RegisterFrameEvents below).
+        boolean gDzCompatHoverDeferArmed = false
+        boolean gDzCompatHoverDeferReady = false
+        trigger array gDzCompatHoverDeferTrig
+        framehandle array gDzCompatHoverDeferFrame
+        integer array gDzCompatHoverDeferEvent
+        integer gDzCompatHoverDeferCount = 0
 
     endglobals
 
@@ -585,38 +601,31 @@ endfunction
         return BlzFrameGetTextSizeLimit(f)
     endfunction
 
-    // Dz passes ONE integer, while BlzFrameSetTextAlignment wants a vertical and a horizontal
-    // value that come from two different sets:
-    //   vertical   0 TEXT_JUSTIFY_TOP, 1 MIDDLE, 2 BOTTOM
-    //   horizontal 3 TEXT_JUSTIFY_LEFT, 4 CENTER, 5 RIGHT      (the ConvertTextAlignType indices)
-    // A value from 0..5 therefore says which axis it sets, and the other axis keeps what an
-    // earlier call set for this frame (top / left when there was none), so a vertical call
-    // followed by a horizontal one gives both.
-    // [LIMITATION] Values outside 0..5 (Dz maps also pass values such as 23 or 50) use an
-    // encoding that neither the Dz docs nor common.j define, so they cannot be translated;
-    // they are ignored instead of being handed to ConvertTextAlignType as if they were
-    // valid alignment indices.
+    // [FIXED] The previous version treated align as ConvertTextAlignType's own two index
+    // sets (0-2 vertical, 3-5 horizontal) - a reasonable-looking guess, but wrong: a real
+    // converted map's own align values include 0, 6, 7 and 50, all outside that 0-5
+    // range, so most calls were silently dropped by the old bounds check. A comparison
+    // tool that ships a working DzFrameSetTextAlignment treats 0 and 100 as LEFT/RIGHT
+    // with vertical always MIDDLE - i.e. align is a 0-100 horizontal position, not a
+    // vertical/horizontal selector - which is also consistent with the same real map's
+    // own 0/50 pairs (used to flip a tab label between left-aligned and centered to show
+    // which tab is selected). Bucketing 0-100 into thirds additionally covers 6 and 7
+    // (both round down to LEFT, which fits their real use on left-justified tooltip
+    // text) without needing an exact 0/50/100 match.
     function DzFrameSetTextAlignment takes integer frame, integer align returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
-        local integer vert = 0
-        local integer horz = 3
-        if f == null or align < 0 or align > 5 then
+        local integer horz
+        if f == null or align < 0 then
             return
         endif
-        if HaveSavedInteger(gDzCompatTextAlign, frame, 1) then
-            set vert = LoadInteger(gDzCompatTextAlign, frame, 1)
-        endif
-        if HaveSavedInteger(gDzCompatTextAlign, frame, 2) then
-            set horz = LoadInteger(gDzCompatTextAlign, frame, 2)
-        endif
-        if align <= 2 then
-            set vert = align
-            call SaveInteger(gDzCompatTextAlign, frame, 1, vert)
+        if align <= 33 then
+            set horz = 3 // TEXT_JUSTIFY_LEFT
+        elseif align >= 67 then
+            set horz = 5 // TEXT_JUSTIFY_RIGHT
         else
-            set horz = align
-            call SaveInteger(gDzCompatTextAlign, frame, 2, horz)
+            set horz = 4 // TEXT_JUSTIFY_CENTER
         endif
-        call BlzFrameSetTextAlignment(f, ConvertTextAlignType(vert), ConvertTextAlignType(horz))
+        call BlzFrameSetTextAlignment(f, ConvertTextAlignType(1), ConvertTextAlignType(horz)) // vertical always MIDDLE
     endfunction
 
     function DzFrameSetFont takes integer frame, string fileName, real height, integer flag returns nothing
@@ -720,9 +729,12 @@ endfunction
     // as "mouse enter" or nothing fires at all, this numbering is wrong for
     // your Dz build.
     //
-    // "sync" isn't reproducible - Reforged frame events are inherently local/
-    // client-side; there's no server-authoritative variant to opt into. Every
-    // variant below (sync, async, block) behaves identically as a result.
+    // "sync" isn't reproducible as a separate mode - it's not a choice: a frame click's
+    // trigger condition/action already runs on every client for every registrant (see
+    // DzCompat_ClickGate and DzCompat_ClickFix below for what that actually implies -
+    // code here must not branch on anything that can read differently per client, e.g. a
+    // frame's local enabled/visible state). Every variant below (sync, async, block)
+    // behaves identically as a result.
 
     // [APPROX] Dz/Bz frame-event id quirk adopted from maxou:
     // event ids above 10 are stored one higher than ConvertFrameEventType
@@ -738,29 +750,38 @@ endfunction
 
     // Trigger condition for click registrations: passes the first click event of a frame
     // and rejects the twin event of the same click (see DZCOMPAT_CLICK_WINDOW).
+    //
+    // [FIXED] Click events fire (and this condition runs) identically for every client,
+    // not just the clicking one - so the old single, player-less (frame, time) pair was
+    // shared by everyone: if a second player clicked the SAME frame within the window
+    // (a shared shop button, say), their real, separate click looked exactly like the
+    // first player's own CONTROL_CLICK/MOUSE_UP twin and was silently dropped for
+    // everyone. Keying by (frame, player) tells the two apart.
     function DzCompat_ClickGate takes nothing returns boolean
         local framehandle f = BlzGetTriggerFrame()
         local integer fid
+        local integer pid
         local real now = 0.
         if f == null then
             return true
         endif
         set fid = GetHandleId(f)
+        set pid = GetPlayerId(GetTriggerPlayer())
         if gDzCompatClickClock != null then
             set now = TimerGetElapsed(gDzCompatClickClock)
         endif
-        if gDzCompatClickFrame == fid and now - gDzCompatClickAt < DZCOMPAT_CLICK_WINDOW then
+        if HaveSavedReal(gDzCompatClickTimes, fid, pid) and now - LoadReal(gDzCompatClickTimes, fid, pid) < DZCOMPAT_CLICK_WINDOW then
             return false
         endif
-        set gDzCompatClickFrame = fid
-        set gDzCompatClickAt = now
+        call SaveReal(gDzCompatClickTimes, fid, pid, now)
         return true
     endfunction
 
-    // The clock behind the click gate. It has to be created here - when a script is
-    // registered, which every client does - and never inside the gate itself: the gate runs
-    // in a frame event, which only fires on the client that clicked, and creating a handle
-    // there would put that client's handle ids out of step with everyone else's.
+    // The clock behind the click gate. Created once, here, rather than inside the gate
+    // itself, simply so a hot path (every click, by every player) doesn't allocate a new
+    // timer handle each time - not because of any client/local distinction. (See
+    // DzCompat_ClickGate's own note: a frame click's condition and action run
+    // identically on every client, so there is nothing local about this at all.)
     function DzCompat_ClickClockEnsure takes nothing returns nothing
         if gDzCompatClickClock == null then
             set gDzCompatClickClock = CreateTimer()
@@ -772,11 +793,23 @@ endfunction
     endfunction
 
     // Runs before the map's own callback for a click: hands the keyboard focus back. A
-    // GLUETEXTBUTTON that keeps the focus after a click swallows the map's hotkeys. Only a
-    // frame that is enabled is toggled, so a frame the map disabled stays disabled.
+    // GLUETEXTBUTTON that keeps the focus after a click swallows the map's hotkeys.
+    //
+    // [FIXED] Keyboard focus is a per-client UI concern - restoring it is only
+    // meaningful, and only safe, on the clicking player's own client. This used to run
+    // unconditionally (for every client, since the click action itself runs for
+    // everyone) and gated the toggle on BlzFrameGetEnable(f), which reads whatever that
+    // ONE client's local view of the frame's enabled state happens to be. A very common
+    // UI pattern disables a frame only inside a GetLocalPlayer()==player block (so only
+    // that player sees it go grey), which makes BlzFrameGetEnable(f) disagree between
+    // clients - so this toggle used to run on some clients and not others for the exact
+    // same click: a desync. Guarding on GetLocalPlayer() == GetTriggerPlayer() instead
+    // (matching how a real Dz build does this) keeps the effect local and identical in
+    // spirit for whichever client actually needs it, with no state-dependent condition
+    // in the way.
     function DzCompat_ClickFix takes nothing returns nothing
         local framehandle f = BlzGetTriggerFrame()
-        if f != null and BlzFrameGetEnable(f) then
+        if f != null and GetLocalPlayer() == GetTriggerPlayer() then
             call BlzFrameSetEnable(f, false)
             call BlzFrameSetEnable(f, true)
         endif
@@ -787,21 +820,50 @@ endfunction
         return eventId == 1 or eventId == 4
     endfunction
 
+    function DzCompat_HoverDeferFlush takes nothing returns nothing
+        local integer i = 0
+        set gDzCompatHoverDeferReady = true
+        loop
+            exitwhen i >= gDzCompatHoverDeferCount
+            call BlzTriggerRegisterFrameEvent(gDzCompatHoverDeferTrig[i], gDzCompatHoverDeferFrame[i], DzCompat_ConvertFrameEvent(gDzCompatHoverDeferEvent[i]))
+            set i = i + 1
+        endloop
+    endfunction
+
+    function DzCompat_RegisterHoverEvent takes trigger trig, framehandle f, integer eventId returns nothing
+        if gDzCompatHoverDeferReady then
+            call BlzTriggerRegisterFrameEvent(trig, f, DzCompat_ConvertFrameEvent(eventId))
+            return
+        endif
+        if not gDzCompatHoverDeferArmed then
+            set gDzCompatHoverDeferArmed = true
+            call TimerStart(CreateTimer(), 0., false, function DzCompat_HoverDeferFlush)
+        endif
+        set gDzCompatHoverDeferTrig[gDzCompatHoverDeferCount] = trig
+        set gDzCompatHoverDeferFrame[gDzCompatHoverDeferCount] = f
+        set gDzCompatHoverDeferEvent[gDzCompatHoverDeferCount] = eventId
+        set gDzCompatHoverDeferCount = gDzCompatHoverDeferCount + 1
+    endfunction
+
     // Registers the frame event(s) for eventId on trig. A click event is registered as both
     // CONTROL_CLICK and MOUSE_UP, because which of the two Reforged sends depends on the
-    // frame's type and template.
+    // frame's type and template. MOUSE_ENTER/MOUSE_LEAVE (hover) go through the deferred
+    // path above instead of registering immediately.
     function DzCompat_RegisterFrameEvents takes trigger trig, framehandle f, integer eventId returns nothing
         if DzCompat_IsClickEvent(eventId) then
             call BlzTriggerRegisterFrameEvent(trig, f, ConvertFrameEventType(1))
             call BlzTriggerRegisterFrameEvent(trig, f, ConvertFrameEventType(4))
+        elseif eventId == 2 or eventId == 3 then
+            call DzCompat_RegisterHoverEvent(trig, f, eventId)
         else
             call BlzTriggerRegisterFrameEvent(trig, f, DzCompat_ConvertFrameEvent(eventId))
         endif
     endfunction
 
     // One script per (frame, event), as in DzAPI: registering again replaces the previous
-    // one. sync is not reproducible here (a Reforged frame event only ever fires on the
-    // client that used the frame), so it is accepted and ignored, as before.
+    // one. sync is not a real choice here - see the note above DzCompat_ClickGate: a
+    // frame click's condition/action run on every client already, regardless of this
+    // flag - so it is accepted and ignored, as before.
     function DzFrameSetScriptByCode takes integer frame, integer eventId, code funcHandle, boolean sync returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
         local trigger trig

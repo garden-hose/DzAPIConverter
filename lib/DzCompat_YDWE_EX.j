@@ -82,6 +82,10 @@
         // fixed parent with those tables' dynamic GetHandleId()-based parents
         // used elsewhere risks an accidental collision.
         hashtable gYDWEEXItemCache = InitHashtable()
+        // Metamorphosis 'Eme1' Data A, keyed by abilcode alone (child key; parent is always
+        // 0 - a dedicated table, not a fixed key inside gYDWEEXLocal, so there's no chance of
+        // colliding with that table's GetHandleId()-based parents). See EXSetAbilityAEmeDataA.
+        hashtable gYDWEEXEmeDataA = InitHashtable()
         // EXEffectMatRotateX/Y/Z: false = each call SETS that axis' angle (stateless); true =
         // each call ADDS to the angle the effect already has, like the real matrix multiply.
         // The additive form remembers the angle per effect handle id, and Warcraft reuses
@@ -579,6 +583,19 @@
             return DzCompat_HotkeyGet(YDWEEX_GetAbilityCode(abil), 1)
         elseif data_type >= 108 and data_type <= 116 then //ABILITY_DATA_DATA_A..I
             set abilcode = YDWEEX_GetAbilityCode(abil)
+            // [FIXED] data_type 108 on an "AEme" (metamorphosis) ability is 'Eme1', which
+            // EXSetAbilityAEmeDataA writes through BlzSetAbilityIntegerLevelField - a write
+            // that only lasts as long as THIS ability instance stays on its unit. A morph
+            // ability is routinely removed (UnitRemoveAbility) and later re-added as a new
+            // instance, so reading it back through the Blz field here would silently return
+            // the object data's original default instead of what was set. The durable,
+            // abilcode-keyed mirror EXSetAbilityAEmeDataA also writes survives that cycle, so
+            // it is checked first for this one field.
+            if data_type == 108 and DzCompat_GetAbilityDataField(abilcode, data_type) == 'Eme1' then
+                if HaveSavedInteger(gYDWEEXEmeDataA, 0, abilcode) then
+                    return LoadInteger(gYDWEEXEmeDataA, 0, abilcode)
+                endif
+            endif
             if DzCompat_GetAbilityDataField(abilcode, data_type) != 0 then
                 return DzCompat_TryGetAbilityDataInteger(abil, abilcode, idx, data_type)
             endif
@@ -631,16 +648,27 @@
     // ============================================================================
 
     // ---- [APPROX] write Metamorphosis Data A (unit id) via 'Eme1', which is the
-    // same four-CC the original EX native targeted. Still mirrored into the local
-    // hashtable so a later read-back (if any) works even if the Blz write is a no-op
-    // for non-metamorphosis abilities.
+    // same four-CC the original EX native targeted.
+    //
+    // [FIXED] BlzSetAbilityIntegerLevelField only overrides 'Eme1' for as long as THIS
+    // ability instance stays on its unit. A morph ability is routinely stripped with
+    // UnitRemoveAbility when the unit reverts, and a later UnitAddAbility gets a brand
+    // new instance (a new handle id) that reads back the object data's original default,
+    // not what was written here - the value "dies" exactly when UnitRemoveAbility runs.
+    // The old fallback mirrored the same value under GetHandleId(abil), which dies with
+    // the instance for the same reason and so never actually helped.
+    // 'Eme1' is object-editor data - one value per (ability code, level), same as the
+    // real field would be if it weren't instance-scoped here - so the durable mirror is
+    // keyed by abilcode instead of by the instance handle. It survives remove/re-add of
+    // the same ability code, and EXGetAbilityDataInteger reads it back in preference to
+    // the instance-scoped Blz field for this exact case (see gYDWEEXEmeDataA above).
     function EXSetAbilityAEmeDataA takes ability abil, integer unitid returns boolean
         local boolean ok
         if abil == null then
             return false
         endif
         set ok = BlzSetAbilityIntegerLevelField(abil, ConvertAbilityIntegerLevelField('Eme1'), 0, unitid)
-        call SaveInteger(gYDWEEXLocal, GetHandleId(abil), 555001, unitid)
+        call SaveInteger(gYDWEEXEmeDataA, 0, YDWEEX_GetAbilityCode(abil), unitid)
         return ok
     endfunction
 
@@ -726,8 +754,11 @@
     // angle; DZCOMPAT_EFFECT_ROTATE_ACCUMULATE (see the globals at the top of this file)
     // switches to a per-effect accumulator that reproduces the cumulative behavior - at the
     // cost of inheriting stale angles when Warcraft reuses a destroyed effect's handle id.
-    // Axis mapping (Z=yaw, X=pitch, Y=roll) is taken directly from YDWE_EX_Natives.j's own
-    // EXEffectSetOrientation wrapper, not guessed. The angle is treated as degrees.
+    // Axis mapping (X=roll, Y=pitch, Z=yaw) matches the actual YDWE EX implementation
+    // (confirmed against a real converted map's own EXEffectMatRotateX/Y/Z bodies, which
+    // call BlzSetSpecialEffectRoll/Pitch/Yaw respectively) - not the "X=pitch, Y=roll"
+    // guess this file used before, which had X and Y swapped. The angle is treated as
+    // degrees.
     function EXEffectMatRotateX takes effect e, real angle returns nothing
         local real cur = angle
         if e == null then
@@ -739,7 +770,7 @@
             endif
             call SaveReal(gYDWEEXLocal, GetHandleId(e), 900002, cur)
         endif
-        call BlzSetSpecialEffectPitch(e, cur * bj_DEGTORAD)
+        call BlzSetSpecialEffectRoll(e, cur * bj_DEGTORAD)
     endfunction
 
     function EXEffectMatRotateY takes effect e, real angle returns nothing
@@ -753,7 +784,7 @@
             endif
             call SaveReal(gYDWEEXLocal, GetHandleId(e), 900003, cur)
         endif
-        call BlzSetSpecialEffectRoll(e, cur * bj_DEGTORAD)
+        call BlzSetSpecialEffectPitch(e, cur * bj_DEGTORAD)
     endfunction
 
     function EXEffectMatRotateZ takes effect e, real angle returns nothing

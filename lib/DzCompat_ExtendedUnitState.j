@@ -106,8 +106,23 @@
     // EVENT_PLAYER_UNIT_ATTACKED handler: Reforged resets a unit's cooldown to
     // its own base value on every attack, so the override has to be reapplied
     // here every time, not just once when either index is set.
+    //
+    // [FIXED] This trigger is registered with TriggerRegisterAnyUnitEventBJ, so it
+    // fires for every attack by every unit in the game - including units that never
+    // had index 37 or 81 touched at all. It used to call ApplyAttackSpeed
+    // unconditionally, which calls BlzSetUnitAttackCooldown on every one of those
+    // attacks too: harmless arithmetically (delta37/bonus81 default to 0, so the
+    // cooldown is written back to what it already was), but it stomps any OTHER
+    // source of that unit's cooldown - a real attack-speed aura or item using
+    // BlzSetUnitAttackCooldown itself gets silently reverted on the unit's very next
+    // attack. Only a unit index 37/81 has actually touched (marked at tag 9082 in
+    // DzCompat_SetExtUnitState) is re-applied here now.
     function DzCompat_ExtStateAttackSpeedHandler takes nothing returns nothing
-        call DzCompat_ExtStateApplyAttackSpeed(GetAttacker())
+        local unit u = GetAttacker()
+        if u == null or not HaveSavedBoolean(gDzCompatUnitStateTable, GetHandleId(u), 9082) then
+            return
+        endif
+        call DzCompat_ExtStateApplyAttackSpeed(u)
     endfunction
 
     // Registers the attack-speed hook exactly once, on first use.
@@ -133,6 +148,29 @@
         endif
     endfunction
 
+    // [FIXED] [APPROX] The "green" attack bonus (items/auras such as Claws of
+    // Attack) is not part of the weapon's base/dice/sides fields at all - it comes from
+    // whatever ability granted it, most commonly one of Blizzard's stock "Item Attack
+    // Bonus" abilities, which all expose the bonus through the same real field,
+    // ABILITY_ILF_ATTACK_BONUS ('Iatt'). Index 21 (max damage) used to derive its value
+    // from base + dice*sides alone, silently dropping this bonus whenever a map read
+    // it and wrote it back (the round trip baked the wrong number into base, losing the
+    // bonus on the next attack-bonus change). Summing 'Iatt' across the unit's current
+    // abilities recovers the common case; a bonus applied by some other, non-field means
+    // (e.g. a fully custom buff system) is still outside what this can see.
+    function DzCompat_ExtStateGetAttackBonus takes unit whichUnit returns integer
+        local integer i = 0
+        local integer total = 0
+        local ability a
+        loop
+            set a = BlzGetUnitAbilityByIndex(whichUnit, i)
+            exitwhen a == null
+            set total = total + BlzGetAbilityIntegerLevelField(a, ABILITY_ILF_ATTACK_BONUS, GetUnitAbilityLevel(whichUnit, BlzGetAbilityId(a)) - 1)
+            set i = i + 1
+        endloop
+        return total
+    endfunction
+
     function DzCompat_GetExtUnitState takes unit whichUnit, integer idx returns real
         if idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
@@ -144,8 +182,10 @@
         elseif idx == 21 then
             // [APPROX] 0x15 Attack 1 max damage - WC3 has no direct "max damage"
             // field; the object editor derives it as base + dice * sides, so
-            // that's what's reproduced here.
-            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0) + (BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0) * BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0)))
+            // that's what's reproduced here, plus the current attack-bonus ability
+            // total (see DzCompat_ExtStateGetAttackBonus) so an active green bonus
+            // is reflected instead of silently dropped.
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0) + (BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0) * BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0)) + DzCompat_ExtStateGetAttackBonus(whichUnit))
         elseif idx == 22 then
             // [REAL] 0x16 Attack 1 range (weapon 1). Matches the UnitState.cpp
             // table entry "range" - not dice*sides damage span.
@@ -187,10 +227,15 @@
             call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value) - dice)
         elseif idx == 21 then
             // [APPROX] 0x15 Attack 1 max damage - write by adjusting base so
-            // base + dice * sides equals the requested maximum.
+            // base + dice * sides + the current attack-bonus ability total (see
+            // DzCompat_ExtStateGetAttackBonus) equals the requested maximum. [FIXED]
+            // Subtracting the bonus here is what keeps it from being lost: without
+            // this, an active green bonus got folded into base on the very next
+            // read-modify-write of max damage, and stayed baked in - wrong - even
+            // after the bonus itself expired.
             set dice = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0)
             set sides = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0)
-            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value) - (dice * sides))
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value) - (dice * sides) - DzCompat_ExtStateGetAttackBonus(whichUnit))
         elseif idx == 22 then
             // [REAL] 0x16 Attack 1 range - see DzCompat_ExtStateSetAttackRange
             call DzCompat_ExtStateSetAttackRange(whichUnit, value)
@@ -206,6 +251,7 @@
             // one place cooldown is ever actually computed - combine it with
             // index 81's bonus and apply the result.
             call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9084, DzCompat_ExtStateGetFrozenBaseCooldown(whichUnit) - value)
+            call SaveBoolean(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9082, true)
             call DzCompat_ExtStateEnsureAttackSpeedHook()
             call DzCompat_ExtStateApplyAttackSpeed(whichUnit)
         elseif idx == 81 then
@@ -215,6 +261,7 @@
             // delta (both anchored on the same frozen baseline) and apply the
             // single, non-double-counted result.
             call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9081, value)
+            call SaveBoolean(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9082, true)
             call DzCompat_ExtStateEnsureAttackSpeedHook()
             call DzCompat_ExtStateApplyAttackSpeed(whichUnit)
         else

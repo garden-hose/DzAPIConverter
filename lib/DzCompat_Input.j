@@ -55,7 +55,21 @@ globals
     hashtable gDzInputWheelReg             = InitHashtable()
     hashtable gDzInputWheelRegCount        = InitHashtable()
     hashtable gDzInputWheelDispatcherReady = InitHashtable()
-endglobals
+	
+	// [FIXED] It used to register the moment DzTriggerRegisterMouseMoveEvent* was
+    // called - which, for a converted map, is very often straight from its own
+    // config/init function. Registering EVENT_PLAYER_MOUSE_MOVE (like frame hover
+    // events - see DzCompat_Frame.j) before the game has actually finished loading
+    // is a documented Reforged engine timing bug: the event silently never fires
+    // afterward. The real registration is now queued and flushed from a single
+    // 0-second timer instead, same fix as the hover one.
+    // sync is accepted for signature compatibility only.
+    boolean gDzCompatMouseMoveDeferArmed = false
+    boolean gDzCompatMouseMoveDeferReady = false
+    trigger array gDzCompatMouseMoveDeferTrig
+    integer gDzCompatMouseMoveDeferCount = 0
+
+    endglobals
 
     // ========================================================================
     // Key events - ByCode
@@ -869,8 +883,22 @@ endglobals
     // ========================================================================
     // EVENT_PLAYER_MOUSE_MOVE is real and synced between players (same event
     // used by DzCompat_EnsureMouseTracking for DzGetMouseTerrainX/Y).
-    // Subject to the same "don't register during map init" engine bug.
-    // sync is accepted for signature compatibility only.
+    //
+    function DzCompat_MouseMoveDeferFlush takes nothing returns nothing
+        local integer i = 0
+        local integer j
+        set gDzCompatMouseMoveDeferReady = true
+        loop
+            exitwhen i >= gDzCompatMouseMoveDeferCount
+            set j = 0
+            loop
+                exitwhen j >= bj_MAX_PLAYER_SLOTS
+                call TriggerRegisterPlayerEvent(gDzCompatMouseMoveDeferTrig[i], Player(j), EVENT_PLAYER_MOUSE_MOVE)
+                set j = j + 1
+            endloop
+            set i = i + 1
+        endloop
+    endfunction
 
     function DzCompat_EnsureMouseMoveEvent takes trigger trig returns nothing
         local integer tid = GetHandleId(trig)
@@ -879,11 +907,20 @@ endglobals
             return
         endif
         call SaveBoolean(gDzInputMouseMoveEventReady, tid, 0, true)
-        loop
-            exitwhen i >= bj_MAX_PLAYER_SLOTS
-            call TriggerRegisterPlayerEvent(trig, Player(i), EVENT_PLAYER_MOUSE_MOVE)
-            set i = i + 1
-        endloop
+        if gDzCompatMouseMoveDeferReady then
+            loop
+                exitwhen i >= bj_MAX_PLAYER_SLOTS
+                call TriggerRegisterPlayerEvent(trig, Player(i), EVENT_PLAYER_MOUSE_MOVE)
+                set i = i + 1
+            endloop
+            return
+        endif
+        if not gDzCompatMouseMoveDeferArmed then
+            set gDzCompatMouseMoveDeferArmed = true
+            call TimerStart(CreateTimer(), 0., false, function DzCompat_MouseMoveDeferFlush)
+        endif
+        set gDzCompatMouseMoveDeferTrig[gDzCompatMouseMoveDeferCount] = trig
+        set gDzCompatMouseMoveDeferCount = gDzCompatMouseMoveDeferCount + 1
     endfunction
 
     function DzCompat_MouseMoveDispatch takes nothing returns nothing

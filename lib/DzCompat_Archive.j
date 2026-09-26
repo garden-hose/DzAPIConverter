@@ -42,9 +42,12 @@
 //   keys and values are escaped, so any value is safe.
 //
 // LIMITATIONS (engine reality):
-//   - Multiplayer: every client has its own disk and only ever reads and writes its OWN
-//     player's files. A Load for another player's data is answered from memory only, so
-//     clients can disagree about it - there is no cross-client sync.
+//   - [FIXED, see DzCompat_Archive_Broadcast] Multiplayer: every client has its own disk
+//     and only ever reads and writes its OWN player's files - so a Get for another
+//     player's data used to be answered from that OTHER client's still-empty memory,
+//     and clients disagreed about it. The client that just loaded its own data from disk
+//     now re-broadcasts every record over BlzSendSyncData so every other client's copy
+//     of gDzArchiveTable ends up holding the same values.
 //   - A .pld line is at most 259 characters, so a value is stored as several records when it
 //     does not fit in one (transparently), and a save is limited to DZARCHIVE_PARTS_MAX files
 //     (about 11 KB of data) and DZARCHIVE_KEYS_MAX keys per player.
@@ -66,6 +69,9 @@ globals
     boolean gDzArchiveInited = false                     // one-time per-session init
     string gDzArchiveFolder = ""                         // "DzCompat_Archive\\<map>\\"
     string gDzArchiveMapName = ""                        // sanitized, from GetMapName()
+
+    // --- Cross-client sync (see DzCompat_Archive_Broadcast) --------------------
+    boolean gDzArchiveSyncReady = false                  // the sync-receive trigger is armed
 
     // --- Channel --------------------------------------------------------------
     // The ability whose tooltip carries the data from the run file back to the script. It MUST
@@ -297,11 +303,28 @@ function DzCompat_Archive_IsLocalStore takes integer sid returns boolean
     return Player(sid) == GetLocalPlayer()
 endfunction
 
+// [FIXED] Was StringHash(GetPlayerName(...)) directly - the player's DISPLAYED name,
+// which a Battle.net rename changes at will. That silently hashes to a different
+// folder, so the player's existing saves become unreachable (they look empty/new, not
+// broken - easy to miss). Battle.net names are shown as "Name#NNNN"; the "#NNNN"
+// discriminator is the part that stays fixed when only the display name is changed, so
+// it - not the full string - is what gets hashed when present. A LAN name with no "#"
+// has no such stable part to fall back to, so the full name is still used there (no
+// worse than before for that case).
+function DzCompat_Archive_Key takes integer sid returns string
+    local string name = GetPlayerName(Player(sid))
+    local integer hashPos = DzCompat_Archive_PosChar(name, "#")
+    if hashPos >= 0 then
+        return SubString(name, hashPos, StringLength(name))
+    endif
+    return name
+endfunction
+
 function DzCompat_Archive_Dir takes integer sid returns string
     if sid == DZARCHIVE_SHARED then
         return gDzArchiveFolder + "shared\\"
     endif
-    return gDzArchiveFolder + "u" + I2S(StringHash(StringCase(GetPlayerName(Player(sid)), false))) + "\\"
+    return gDzArchiveFolder + "u" + I2S(StringHash(StringCase(DzCompat_Archive_Key(sid), false))) + "\\"
 endfunction
 
 function DzCompat_Archive_Path takes integer sid, string prefix, integer part returns string
@@ -619,6 +642,65 @@ function DzCompat_Archive_ParseRecord takes integer sid, string rec returns noth
     endif
 endfunction
 
+// ---------------------------------------------------------------------------
+// [FIXED] Cross-client sync. Every client can only ever read ITS OWN player's save
+// from disk (see the file header); on every other client, that player's rows of
+// gDzArchiveTable stay empty forever. If any Get*StoredValue call for that data feeds a
+// native that changes shared game state (a hero stat, an item, ...), each client would
+// compute it from different inputs - a desync, not just a display glitch. The owning
+// client re-sends every record it just loaded, tagged with its store id, so every other
+// client's copy ends up holding the same data. One record per sync message (each is
+// already at most DZARCHIVE_PART_MAX raw characters before DzCompat_Archive_Enc, well
+// under typical sync payload limits), reusing DzCompat_Archive_ParseRecord itself to
+// decode on the receiving end so the wire format only has to be right in one place.
+// ---------------------------------------------------------------------------
+
+function DzCompat_Archive_SyncRecv takes nothing returns nothing
+    local string s = BlzGetTriggerSyncData()
+    local integer bar = DzCompat_Archive_PosChar(s, "|")
+    local integer sid
+    if bar <= 0 then
+        return
+    endif
+    set sid = S2I(SubString(s, 0, bar))
+    if sid < 0 or sid > DZARCHIVE_SHARED then
+        return
+    endif
+    call DzCompat_Archive_ParseRecord(sid, SubString(s, bar + 1, StringLength(s)))
+endfunction
+
+function DzCompat_Archive_EnsureSync takes nothing returns nothing
+    local trigger t
+    local integer i = 0
+    if gDzArchiveSyncReady then
+        return
+    endif
+    set gDzArchiveSyncReady = true
+    set t = CreateTrigger()
+    loop
+        exitwhen i >= bj_MAX_PLAYER_SLOTS
+        call BlzTriggerRegisterPlayerSyncEvent(t, Player(i), "DzAr", false)
+        set i = i + 1
+    endloop
+    call TriggerAddAction(t, function DzCompat_Archive_SyncRecv)
+endfunction
+
+// Sends every record of a store just loaded from disk to the other clients. Only
+// meaningful (and only ever called) on the store's own owning client - see
+// DzCompat_Archive_LoadStore, the only caller.
+function DzCompat_Archive_Broadcast takes integer sid returns nothing
+    local integer i = 0
+    local integer n = gDzArchiveKeyCount[sid]
+    local string key
+    call DzCompat_Archive_EnsureSync()
+    loop
+        exitwhen i >= n
+        set key = gDzArchiveKeys[sid * DZARCHIVE_KEYS_MAX + i]
+        call BlzSendSyncData("DzAr", I2S(sid) + "|" + DzCompat_Archive_Enc(key, true) + "=s" + DzCompat_Archive_Enc(LoadStr(gDzArchiveTable, sid, StringHash(key)), false))
+        set i = i + 1
+    endloop
+endfunction
+
 // Reads the store from disk into memory (this machine's own files only; see the header).
 function DzCompat_Archive_LoadStore takes integer sid returns nothing
     local string s
@@ -684,6 +766,7 @@ function DzCompat_Archive_LoadStore takes integer sid returns nothing
     if not gDzArchiveSawEof then
         call DzCompat_Warn("archive: the save has no closing marker - it was cut short; what could be read was loaded")
     endif
+    call DzCompat_Archive_Broadcast(sid)
     call DzCompat_Warn("archive: loaded " + I2S(gDzArchiveKeyCount[sid]) + " key(s) from " + I2S(parts) + " file(s) in " + DzCompat_Archive_Dir(sid))
 endfunction
 
