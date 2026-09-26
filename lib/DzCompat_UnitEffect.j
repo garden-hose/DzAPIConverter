@@ -530,11 +530,6 @@ endglobals
     function DzGetUnitUnderMouse takes nothing returns unit
         return BlzGetMouseFocusUnit()
     endfunction
-	
-	// DzGetUnitUnderMouse alias 
-    function DzGetMouseFocus takes nothing returns unit
-        return BlzGetMouseFocusUnit()
-    endfunction
 
     // [APPROX] Local selection helpers built on GroupEnumUnitsSelected.
     // Dz/KK expose these as JAPI; Reforged has no dedicated native, but the
