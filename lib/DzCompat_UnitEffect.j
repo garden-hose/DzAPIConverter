@@ -7,6 +7,7 @@
 globals
     hashtable gDzCompatUnitDataCache = InitHashtable()
     hashtable gDzCompatEffectTimers = InitHashtable()
+    hashtable gDzCompatEffectHidden = InitHashtable()
     hashtable gDzCompatMouseTrack = InitHashtable()
     boolean   gDzCompatMouseTrackReady = false
     constant integer SILENCE_ABILITY_ID = 'ACsi'
@@ -289,6 +290,42 @@ endglobals
     // ---- effect scale ----------------------------------------------------
     function DzSetEffectScale takes effect whichHandle, real scale returns nothing
         call BlzSetSpecialEffectScale(whichHandle, scale)
+    endfunction
+
+    // Plays the named animation. The attachment ("link") argument has no Reforged equivalent.
+    function DzPlayEffectAnimation takes effect whichEffect, string anim, string link returns nothing
+        if whichEffect == null or anim == null then
+            return
+        endif
+        call BlzSetSpecialEffectAnimation(whichEffect, anim)
+    endfunction
+
+    // Reforged cannot hide a special effect. Alpha 0 alone leaves particles and additive layers on screen, so
+    // hiding also zeroes the scale and the matrix scale; showing restores alpha 255 and the scale the effect had
+    // when it was hidden. (Measured in game on ported KK maps.)
+    function DzSetEffectVisible takes effect whichEffect, boolean enable returns nothing
+        local integer h
+        if whichEffect == null then
+            return
+        endif
+        set h = GetHandleId(whichEffect)
+        if enable then
+            call BlzSetSpecialEffectAlpha(whichEffect, 255)
+            if HaveSavedReal(gDzCompatEffectHidden, h, 0) then
+                call BlzSetSpecialEffectScale(whichEffect, LoadReal(gDzCompatEffectHidden, h, 0))
+                call RemoveSavedReal(gDzCompatEffectHidden, h, 0)
+            else
+                call BlzSetSpecialEffectScale(whichEffect, 1.0)
+            endif
+            call BlzResetSpecialEffectMatrix(whichEffect)
+        else
+            if not HaveSavedReal(gDzCompatEffectHidden, h, 0) then
+                call SaveReal(gDzCompatEffectHidden, h, 0, BlzGetSpecialEffectScale(whichEffect))
+            endif
+            call BlzSetSpecialEffectAlpha(whichEffect, 0)
+            call BlzSetSpecialEffectScale(whichEffect, 0.0)
+            call BlzSetSpecialEffectMatrixScale(whichEffect, 0.0, 0.0, 0.0)
+        endif
     endfunction
 
     // ---- effect alpha -----------------------------------------------------

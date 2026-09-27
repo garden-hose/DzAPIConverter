@@ -37,7 +37,7 @@ final class ConverterConstants {
         "DzFrameGetMinimapButton", "DzFrameGetTooltip", "DzFrameGetTopMessage",
         "DzFrameGetUnitMessage", "DzFrameGetChatMessage", "DzFrameGetPortrait",
         "DzFrameGetWorldFrameMessage", "DzFrameGetInfoPanelBuffButton",
-		"DzGetWindowWidth", "DzGetWindowHeight",
+		"DzGetWindowWidth", "DzGetWindowHeight", "DzIsWindowActive", "DzFrameGetUpperButtonBarButton",
         // UnitEffect / Sync
         "DzSyncData", "DzSyncDataImmediately", "DzSyncBuffer", "DzTriggerRegisterSyncData",
         "DzGetTriggerSyncPrefix", "DzGetTriggerSyncData", "DzGetTriggerSyncPlayer", "DzExecuteFunc",
@@ -49,6 +49,7 @@ final class ConverterConstants {
         "DzSetUnitMissileSpeed", "DzSetUnitMissileArc", "DzSetUnitMissileHoming", "DzSetUnitMissileModel",
         "DzSetUnitProperName", "DzWidgetSetMinimapIcon",
         "DzSetEffectPos", "DzSetEffectScale", "DzSetEffectVertexAlpha", "DzSetEffectVertexColor",
+        "DzPlayEffectAnimation", "DzSetEffectVisible",
         "DzReviveUnit", "DzSetUnitDataCacheInteger",
         "DzUnitOrdersClear", "DzUnitOrdersCount", "DzUnitOrdersForceStop",
         "DzGroupGetCount", "DzGroupGetUnitAt", "DzRemoveEffect", "DzRemoveEffectTimed", "DzDieEffectTimed",
@@ -101,7 +102,7 @@ final class ConverterConstants {
         "DzStringTrimLeft", "DzStringTrimRight", "DzStringTrim", "DzStringReverse",
         "DzStringReplace", "DzStringInsert",
         // DzCompat_YDWE_EX.j - YDWE / yd_jass_api "EX*" extended natives
-        "EXGetUnitAbility", "EXGetUnitAbilityByIndex", "EXGetAbilityId",
+        "EXGetUnitAbility", "EXGetUnitAbilityByIndex", "EXGetAbilityId", "DzUnitFindAbility",
         "EXGetAbilityState", "EXSetAbilityState",
         "EXGetAbilityDataReal", "EXSetAbilityDataReal",
         "EXGetAbilityDataInteger", "EXSetAbilityDataInteger",

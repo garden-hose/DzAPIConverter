@@ -8,6 +8,7 @@ globals
     // Shared unit/effect bookkeeping.
     hashtable gDzCompatUnitDataCache = InitHashtable()
     hashtable gDzCompatEffectTimers = InitHashtable()
+    hashtable gDzCompatEffectHidden = InitHashtable()
     hashtable gDzCompatMouseTrack = InitHashtable()
     boolean   gDzCompatMouseTrackReady = false
     constant integer SILENCE_ABILITY_ID = 'ACsi'
