@@ -257,6 +257,11 @@
         return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_COMMAND_BUTTON, row * 4 + column))
     endfunction
 
+    // The upper button bar (menu, allies, log, quests): the origin frame SYSTEM_BUTTON.
+    function DzFrameGetUpperButtonBarButton takes integer buttonId returns integer
+        return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_SYSTEM_BUTTON, buttonId))
+    endfunction
+
 function DzCompat_GetStableParent takes nothing returns framehandle
     if gDzStableParent == null then
         // ConsoleUI is the root of the UI hierarchy and was NOT restructured
@@ -1053,6 +1058,11 @@ endfunction
     function DzSetUnitID takes unit whichUnit, integer id returns nothing
         call BlzSetUnitSkin(whichUnit, id)
         call BlzSetUnitName(whichUnit, GetObjectName(id))
+    endfunction
+
+    // Whether the game window has focus (local). The neutral stub would answer "never active".
+    function DzIsWindowActive takes nothing returns boolean
+        return BlzIsLocalClientActive()
     endfunction
 
     // ---- [APPROX] checkbox state --------------------------------------------------

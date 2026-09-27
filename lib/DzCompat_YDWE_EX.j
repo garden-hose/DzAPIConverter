@@ -222,6 +222,14 @@
         return a
     endfunction
 
+    // DzUnitFindAbility is EXGetUnitAbility under the Dz name (the ability handle, cached for the EX data natives).
+    function DzUnitFindAbility takes unit whichUnit, integer abilcode returns ability
+        if whichUnit == null then
+            return null
+        endif
+        return EXGetUnitAbility(whichUnit, abilcode)
+    endfunction
+
     function EXGetUnitAbilityByIndex takes unit u, integer index returns ability
         local ability a = BlzGetUnitAbilityByIndex(u, index)
         // Index path does not receive the rawcode up front; read it back once
