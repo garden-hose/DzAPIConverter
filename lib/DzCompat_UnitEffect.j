@@ -374,18 +374,44 @@ endglobals
         call BlzSetSpecialEffectAlpha(whichEffect, DzCompat_ColorAlpha(color))
     endfunction
 
-    // ---- [APPROX] revive unit -------------------------------------------------------
-    // Real ReviveHero takes no player param - unlike KillUnit's dropped
-    // killer, reviving doesn't have an obvious real substitute for changing
-    // ownership as part of the revive itself (ChangeOwningPlayer beforehand
-    // would be a separate, larger behavior change - it fires ownership-change
-    // events reviving alone wouldn't). whichPlayer is dropped; the unit
-    // revives under its current owner. hp/mp are applied after revival via
-    // SetWidgetLife/SetUnitState since ReviveHero doesn't take them either.
+    // ---- [FIXED] revive unit ----------------------------------------------------
+    // ReviveHero only works on UNIT_TYPE_HERO units - calling it on a regular
+    // unit is a silent no-op in the real engine, so this used to do nothing at
+    // all for non-hero callers (a real correctness gap, not just an
+    // approximation). Non-heroes are now revived by recreating them, which is
+    // the standard real-engine substitute (there is no ReviveUnit native).
+    // whichPlayer is honored where it's cheap to: null means "keep current
+    // owner"; for heroes, an explicit different player runs through
+    // SetUnitOwner after the revive (still dropped as a same-instant part of
+    // ReviveHero itself - see original note below). hp<=0 is treated as "not
+    // specified" rather than as an instant re-kill, since 0 was almost
+    // certainly a default/unset argument, not deliberate.
     function DzReviveUnit takes unit whichUnit, player whichPlayer, real hp, real mp, real x, real y returns nothing
-        call ReviveHero(whichUnit, x, y, true)
-        call SetWidgetLife(whichUnit, hp)
-        call SetUnitState(whichUnit, UNIT_STATE_MANA, mp)
+        local unit newUnit
+        if whichUnit == null then
+            return
+        endif
+        if whichPlayer == null then
+            set whichPlayer = GetOwningPlayer(whichUnit)
+        endif
+        if IsUnitType(whichUnit, UNIT_TYPE_HERO) then
+            call ReviveHero(whichUnit, x, y, true)
+            if hp > 0.00 then
+                call SetWidgetLife(whichUnit, hp)
+            endif
+            call SetUnitState(whichUnit, UNIT_STATE_MANA, mp)
+            if GetOwningPlayer(whichUnit) != whichPlayer then
+                call SetUnitOwner(whichUnit, whichPlayer, true)
+            endif
+            return
+        endif
+        // Non-hero: no revive native exists, so recreate it in place.
+        set newUnit = CreateUnit(whichPlayer, GetUnitTypeId(whichUnit), x, y, GetUnitFacing(whichUnit))
+        if hp > 0.00 then
+            call SetUnitState(newUnit, UNIT_STATE_LIFE, hp)
+        endif
+        call SetUnitState(newUnit, UNIT_STATE_MANA, mp)
+        set newUnit = null
     endfunction
 
     // ---- [LOCAL] no known real native backs this at all (writes into an

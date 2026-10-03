@@ -197,13 +197,36 @@
         return DzCompat_RegisterFrameNamed(f, regName, id)
     endfunction
 
+    // [FIXED] leak: DzFrameSetScriptByCode (and the Block/Async variants that call
+    // it) create one owned trigger per (frame, eventId) and store it in
+    // gDzCompatFrameEvt, but this function used to just null the frame slot and
+    // never destroyed those triggers - every frame that ever had a script
+    // attached leaked one trigger handle (and its hashtable entry) per event for
+    // the rest of the game. Loop the known FRAMEEVENT eventId range (matches
+    // DzCompat_ConvertFrameEvent's domain) and destroy anything stored for this
+    // frame before tearing it down. The by-name variant (DzFrameSetScript) is
+    // untouched here on purpose: its trigger is shared across every frame
+    // registered to that function name, so it must outlive any single frame.
     function DzDestroyFrame takes integer frame returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
+        local integer eventId = 1
+        local trigger trig
         if f == null then
             return
         endif
+        loop
+            exitwhen eventId > 20
+            set trig = LoadTriggerHandle(gDzCompatFrameEvt, frame, eventId)
+            if trig != null then
+                call DestroyTrigger(trig)
+            endif
+            set eventId = eventId + 1
+        endloop
+        call FlushChildHashtable(gDzCompatFrameEvt, frame)
+        call FlushChildHashtable(gDzCompatFocusTrack, frame)
         call BlzDestroyFrame(f)
         set gDzCompatFrame[frame] = null
+        set trig = null
     endfunction
 
     function DzFrameFindByName takes string name, integer id returns integer
@@ -622,6 +645,11 @@ endfunction
     // which tab is selected). Bucketing 0-100 into thirds additionally covers 6 and 7
     // (both round down to LEFT, which fits their real use on left-justified tooltip
     // text) without needing an exact 0/50/100 match.
+    //
+    // A map's own DzFrameSetTextAlignment calls all pass align=2, which is also
+    // consistent with either scheme (LEFT here; BOTTOM there), so it doesn't
+    // help decide. Pending a data point that actually
+    // discriminates between the two.
     function DzFrameSetTextAlignment takes integer frame, integer align returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
         local integer horz

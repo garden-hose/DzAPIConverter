@@ -153,27 +153,34 @@
     // use the base Tooltip/ExtendedTooltip/Icon natives instead and vice versa.
     // [PORT LIMITATION] everything else (hotkeys, the per-slot art fields,
     // lightning effect) - no by-id native found for these.
-    // [UNVERIFIED] level indexing: EX docs say level is 1-based; whether these
-    // particular Blz natives expect 0- or 1-based level was not confirmed during
-    // research - verify in-game and adjust by +/-1 here if tooltips land on the
-    // wrong level.
+    // [FIXED] level indexing: level is 1-based (Dz/GUI convention, same as every
+    // sibling function in this file - see idx = level - 1 in EXGetAbilityDataReal
+    // etc. above), but these Blz tooltip/icon natives take a 0-based level field,
+    // same as BlzGet/SetAbilityRealLevelField. This file previously passed level
+    // through unadjusted to the tooltip natives (marked [UNVERIFIED]); confirmed
+    // off-by-one by comparison against an independently field-tested port that
+    // does the same -1 clamp here as everywhere else.
     function YDWEEX_GetAbilityStringByCode takes integer abilcode, integer level, integer data_type returns string
+        local integer idx = level - 1
+        if idx < 0 then
+            set idx = 0
+        endif
         if data_type == 203 then //ABILITY_DATA_NAME
             return GetObjectName(abilcode)
         elseif data_type == 204 then //ABILITY_DATA_ART
             return BlzGetAbilityIcon(abilcode)
         elseif data_type == 215 then //ABILITY_DATA_TIP
-            return BlzGetAbilityTooltip(abilcode, level)
+            return BlzGetAbilityTooltip(abilcode, idx)
         elseif data_type == 218 then //ABILITY_DATA_UBERTIP
-            return BlzGetAbilityExtendedTooltip(abilcode, level)
+            return BlzGetAbilityExtendedTooltip(abilcode, idx)
         elseif data_type == 214 then //ABILITY_DATA_RESEARCH_TIP
-            return BlzGetAbilityResearchTooltip(abilcode, level)
+            return BlzGetAbilityResearchTooltip(abilcode, idx)
         elseif data_type == 217 then //ABILITY_DATA_RESEARCH_UBERTIP
-            return BlzGetAbilityResearchExtendedTooltip(abilcode, level)
+            return BlzGetAbilityResearchExtendedTooltip(abilcode, idx)
 		elseif data_type == 216 then //ABILITY_DATA_UNTIP
-            return BlzGetAbilityActivatedTooltip(abilcode, level)
+            return BlzGetAbilityActivatedTooltip(abilcode, idx)
         elseif data_type == 219 then //ABILITY_DATA_UNUBERTIP
-            return BlzGetAbilityActivatedExtendedTooltip(abilcode, level)
+            return BlzGetAbilityActivatedExtendedTooltip(abilcode, idx)
         elseif data_type == 220 then //ABILITY_DATA_UNART
             return BlzGetAbilityActivatedIcon(abilcode)
         endif
@@ -181,26 +188,30 @@
     endfunction
 
     function YDWEEX_SetAbilityStringByCode takes integer abilcode, integer level, integer data_type, string value returns boolean
+        local integer idx = level - 1
+        if idx < 0 then
+            set idx = 0
+        endif
         if data_type == 204 then //ABILITY_DATA_ART
             call BlzSetAbilityIcon(abilcode, value)
             return true
         elseif data_type == 215 then //ABILITY_DATA_TIP
-            call BlzSetAbilityTooltip(abilcode, value, level)
+            call BlzSetAbilityTooltip(abilcode, value, idx)
             return true
         elseif data_type == 218 then //ABILITY_DATA_UBERTIP
-            call BlzSetAbilityExtendedTooltip(abilcode, value, level)
+            call BlzSetAbilityExtendedTooltip(abilcode, value, idx)
             return true
         elseif data_type == 214 then //ABILITY_DATA_RESEARCH_TIP
-            call BlzSetAbilityResearchTooltip(abilcode, value, level)
+            call BlzSetAbilityResearchTooltip(abilcode, value, idx)
             return true
         elseif data_type == 217 then //ABILITY_DATA_RESEARCH_UBERTIP
-            call BlzSetAbilityResearchExtendedTooltip(abilcode, value, level)
+            call BlzSetAbilityResearchExtendedTooltip(abilcode, value, idx)
             return true
 		elseif data_type == 216 then //ABILITY_DATA_UNTIP
-            call BlzSetAbilityActivatedTooltip(abilcode, value, level)
+            call BlzSetAbilityActivatedTooltip(abilcode, value, idx)
             return true
         elseif data_type == 219 then //ABILITY_DATA_UNUBERTIP
-            call BlzSetAbilityActivatedExtendedTooltip(abilcode, value, level)
+            call BlzSetAbilityActivatedExtendedTooltip(abilcode, value, idx)
             return true
         elseif data_type == 220 then //ABILITY_DATA_UNART
             call BlzSetAbilityActivatedIcon(abilcode, value)
