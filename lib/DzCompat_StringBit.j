@@ -349,3 +349,95 @@
         return SubString(s, 0, whichPosition) + whichString + SubString(s, whichPosition, StringLength(s))
     endfunction
 
+    endfunction
+
+    // Non-overlapping count of whichString inside s. Empty needle returns 0.
+    function DzStringCount takes string s, string whichString returns integer
+        local integer step = StringLength(whichString)
+        local integer hayLen = StringLength(s)
+        local integer p = 0
+        local integer count = 0
+        local integer q
+        if step <= 0 then
+            return 0
+        endif
+        loop
+            exitwhen p + step > hayLen
+            set q = DzStringFind(s, whichString, p, true)
+            exitwhen q < 0
+            set count = count + 1
+            set p = q + step
+        endloop
+        return count
+    endfunction
+
+    // Returns the 0-based index-th token of s split by delimiter whichString.
+    // Empty delimiter returns s for index 0 and "" otherwise. Out-of-range
+    // index returns "".
+    function DzStringSplit takes string s, string whichString, integer index returns string
+        local integer step = StringLength(whichString)
+        local integer hayLen = StringLength(s)
+        local integer p = 0
+        local integer k = 0
+        local integer q
+        if step <= 0 then
+            if index == 0 then
+                return s
+            endif
+            return ""
+        endif
+        loop
+            set q = DzStringFind(s, whichString, p, true)
+            if k == index then
+                if q < 0 then
+                    return SubString(s, p, hayLen)
+                endif
+                return SubString(s, p, q)
+            endif
+            if q < 0 then
+                return ""
+            endif
+            set p = q + step
+            set k = k + 1
+        endloop
+        return ""
+    endfunction
+
+    // ============================================================
+    // BIT ALIASES
+    // ============================================================
+
+    // Plain-name forms of the Dz bit natives (some KK environments declare these instead of / next to DzBit*).
+    function BitAnd takes integer x, integer y returns integer
+        return DzBitAnd(x, y)
+    endfunction
+
+    function BitOr takes integer x, integer y returns integer
+        return DzBitOr(x, y)
+    endfunction
+
+    function BitXor takes integer x, integer y returns integer
+        return DzBitXor(x, y)
+    endfunction
+
+    function BitShiftL takes integer x, integer y returns integer
+        return DzBitShiftLeft(x, y)
+    endfunction
+
+    // Arithmetic shift right: the sign is kept and the result rounds toward negative infinity
+    // (-5 >> 1 == -3), unlike DzBitShiftRight, whose "/ 2" truncates toward zero. The shift count is taken
+    // modulo 32.
+    function BitShiftR takes integer x, integer y returns integer
+        local integer count = ModuloInteger(y, 32)
+        local integer n = 0
+        loop
+            exitwhen n >= count
+            if x >= 0 then
+                set x = x / 2
+            else
+                set x = (x - 1) / 2
+            endif
+            set n = n + 1
+        endloop
+        return x
+    endfunction

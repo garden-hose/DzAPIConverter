@@ -21,10 +21,11 @@ final class ModelPathRegistry {
 
     private ModelPathRegistry() {}
 
-    /** True if the script mentions DzSetUnitModel (native, function, or call). */
+    /** True if the script mentions DzSetUnitModel or its SetUnitModel alias (native, function, or call). */
     static boolean scriptUsesDzSetUnitModel(List<String> lines) {
         for (String line : lines) {
-            if (line.contains("DzSetUnitModel")) {
+            // "SetUnitModel" is also a substring of "DzSetUnitModel", so one check covers both
+            if (line.contains("SetUnitModel")) {
                 return true;
             }
         }
@@ -42,10 +43,10 @@ final class ModelPathRegistry {
      */
     static LinkedHashSet<String> extractDzSetUnitModelPaths(List<String> lines) {
         LinkedHashSet<String> paths = new LinkedHashSet<>();
-        // DzSetUnitModel( unitExpr , "path" )  - unitExpr may contain commas
-        // (nested calls) but never a string literal.
+        // DzSetUnitModel( unitExpr , "path" ) or its SetUnitModel alias - unitExpr may
+        // contain commas (nested calls) but never a string literal.
         Pattern p = Pattern.compile(
-                "\\bDzSetUnitModel\\s*\\([^\"]*?,\\s*\"([^\"]+)\"",
+                "\\b(?:Dz)?SetUnitModel\\s*\\([^\"]*?,\\s*\"([^\"]+)\"",
                 Pattern.CASE_INSENSITIVE);
         for (String line : lines) {
             if (line.trim().startsWith("//")) {

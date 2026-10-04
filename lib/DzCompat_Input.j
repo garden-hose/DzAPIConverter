@@ -62,6 +62,11 @@ globals
     trigger array gDzCompatMouseMoveDeferTrig
     integer gDzCompatMouseMoveDeferCount = 0
 		
+
+    // DzFrameSetUpdateCallback (string form): one shared 30 Hz timer runs every registered function name.
+    timer         gDzInputUpdateTimer = null
+    integer       gDzInputUpdateCount = 0
+    string array  gDzInputUpdateNames
 endglobals
 
     // ========================================================================
@@ -1295,8 +1300,37 @@ endglobals
         call TimerStart(CreateTimer(), 1.0 / 30.0, true, funcHandle)
     endfunction
 
+    // Runs every function registered through DzFrameSetUpdateCallback. ExecuteFunc is what turns the stored
+    // names back into calls, since a name cannot be resolved to code any other way in plain JASS.
+    function DzCompat_UpdateCallbackTick takes nothing returns nothing
+        local integer i = 0
+        loop
+            exitwhen i >= gDzInputUpdateCount
+            call ExecuteFunc(gDzInputUpdateNames[i])
+            set i = i + 1
+        endloop
+    endfunction
+
+    // [APPROX] Same 30 Hz timer as DzFrameSetUpdateCallbackByCode, shared by all names; a name registered
+    // twice runs once per tick. A callback that is run by name cannot stop itself or be unregistered.
     function DzFrameSetUpdateCallback takes string funcName returns nothing
-        // String form cannot be resolved to code in plain JASS.
+        local integer i = 0
+        if funcName == null or funcName == "" then
+            return
+        endif
+        loop
+            exitwhen i >= gDzInputUpdateCount
+            if gDzInputUpdateNames[i] == funcName then
+                return
+            endif
+            set i = i + 1
+        endloop
+        if gDzInputUpdateTimer == null then
+            set gDzInputUpdateTimer = CreateTimer()
+            call TimerStart(gDzInputUpdateTimer, 1.0 / 30.0, true, function DzCompat_UpdateCallbackTick)
+        endif
+        set gDzInputUpdateNames[gDzInputUpdateCount] = funcName
+        set gDzInputUpdateCount = gDzInputUpdateCount + 1
     endfunction
 
     // ========================================================================

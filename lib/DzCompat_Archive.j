@@ -51,6 +51,10 @@
 //   - A .pld line is at most 259 characters, so a value is stored as several records when it
 //     does not fit in one (transparently), and a save is limited to DZARCHIVE_PARTS_MAX files
 //     (about 11 KB of data) and DZARCHIVE_KEYS_MAX keys per player.
+//   - Writing is delayed and spread over several ticks (see "Writing to disk" below), so a save reaches the
+//     disk a moment after the Save call; KKApiEndBatchSaveArchive and "-save" write everything before
+//     they return. While a large save is being written (about a second at the 11 KB limit) its files are a
+//     mix of the old and new save; leaving the game in that moment is covered by the backups.
 //   - Keys are case-insensitive (StringHash), like the real server's.
 //   - A carriage return inside a value is not escaped.
 // ============================================================================
@@ -103,12 +107,48 @@ globals
     integer gDzArchiveUsable = 0                         // cached DzCompat_Archive_Capacity
     boolean gDzArchiveSawEof = false
 
-    // --- Writing to disk: delayed and batched -----------------------------------
-    // A map saves dozens of keys in a burst; rewriting the files for each one would be
-    // dozens of file writes. The files are rewritten once, DZARCHIVE_FLUSH_DELAY game seconds
-    // after the last change (0 = on every change).
+    // --- Writing to disk: delayed per player, then spread over several ticks ------
+    // A map saves dozens of keys in a burst; rewriting the files for each one would be dozens of
+    // file writes. Every store has its own timer: its files are rewritten DZARCHIVE_FLUSH_DELAY game
+    // seconds after ITS last change (0 = on every change), and at the latest DZARCHIVE_FLUSH_MAX_WAIT
+    // seconds after its first unwritten change, so a store that never stops changing is still written.
+    // The write itself is a job in a queue, worked off by one repeating timer: a few hundred characters
+    // of data are turned into file text per tick, then a few files are written per tick, so one save
+    // is never one long thread (the engine cuts a thread that runs too long).
+    // All of these timers are started on EVERY client (the work they trigger is skipped on the clients
+    // that do not own the store) so that no client creates or starts a handle the others do not.
     constant real DZARCHIVE_FLUSH_DELAY = 0.5
-    timer gDzArchiveFlushTimer = null
+    constant real DZARCHIVE_FLUSH_MAX_WAIT = 5.0
+    constant real DZARCHIVE_STEP_INTERVAL = 0.05         // seconds between two steps of the job being worked off
+    constant integer DZARCHIVE_BUILD_BUDGET = 700        // characters of data turned into file text per step
+    constant integer DZARCHIVE_FILES_PER_STEP = 4        // files written per step
+    constant integer DZARCHIVE_NO_LIMIT = 2000000000     // budget of a write that must finish at once
+    timer array gDzArchiveStoreTimer                     // the delay timer of each store
+    boolean array gDzArchiveWaiting                      // that timer is counting down for a first unwritten change
+    real array gDzArchiveFirstDirty                      // when that change happened (gDzArchiveClock)
+    boolean array gDzArchiveQueued                       // the live save of the store waits in the queue
+    timer gDzArchiveClock = null                         // only read: seconds since the first archive access
+    timer gDzArchiveWorkTimer = null                     // repeating: one step of the job at the head of the queue
+
+    // --- Queue of writes (the live save of a store, or one of its backups) -------
+    constant integer DZARCHIVE_QUEUE_MAX = 64
+    integer array gDzArchiveQueueSid
+    string array gDzArchiveQueuePrefix
+    integer gDzArchiveQueueHead = 0
+    integer gDzArchiveQueueCount = 0
+
+    // --- The write being worked off ----------------------------------------------
+    // phase 0 = none, 1 = turning the data into chunks, 2 = writing the chunk files. The data of the
+    // store is copied when the job starts, so changes made while it runs go into the next one.
+    integer gDzArchiveJobPhase = 0
+    integer gDzArchiveJobSid = 0
+    string gDzArchiveJobPrefix = ""
+    integer gDzArchiveJobN = 0                           // keys in the copy
+    integer gDzArchiveJobIdx = 0                         // key being turned into records
+    integer gDzArchiveJobPos = 0                         // characters of its value already done
+    integer gDzArchiveJobFile = 0                        // next chunk file to write
+    string array gDzArchiveJobKey
+    string array gDzArchiveJobVal
 
     // --- Backup timer / rotation ------------------------------------------------
     timer gDzArchiveClockTimer = null
@@ -510,13 +550,77 @@ function DzCompat_Archive_AddRecord takes string rec, integer recLen, integer us
     set gDzArchiveCurLen = gDzArchiveCurLen + recLen
 endfunction
 
-// Builds the chunks that hold the whole store into gDzArchiveChunk. Every chunk is made
-// so its escaped text plus the "#" lines fits one line. Returns the number of chunks (files),
-// or 0 when the store is empty or does not fit DZARCHIVE_PARTS_MAX files.
-function DzCompat_Archive_BuildChunks takes integer sid returns integer
+// Copies the head of the queue's store and starts its job. Nothing starts for a store without
+// keys (there is nothing to write).
+function DzCompat_Archive_JobStart takes nothing returns nothing
+    local integer sid = gDzArchiveQueueSid[gDzArchiveQueueHead]
+    local string prefix = gDzArchiveQueuePrefix[gDzArchiveQueueHead]
+    local integer n = gDzArchiveKeyCount[sid]
+    local integer i = 0
+    set gDzArchiveQueueHead = ModuloInteger(gDzArchiveQueueHead + 1, DZARCHIVE_QUEUE_MAX)
+    set gDzArchiveQueueCount = gDzArchiveQueueCount - 1
+    if prefix == DZARCHIVE_SAVE_NAME then
+        set gDzArchiveQueued[sid] = false
+    endif
+    if n <= 0 then
+        return
+    endif
+    loop
+        exitwhen i >= n
+        set gDzArchiveJobKey[i] = gDzArchiveKeys[sid * DZARCHIVE_KEYS_MAX + i]
+        set gDzArchiveJobVal[i] = LoadStr(gDzArchiveTable, sid, StringHash(gDzArchiveJobKey[i]))
+        set i = i + 1
+    endloop
+    set gDzArchiveJobSid = sid
+    set gDzArchiveJobPrefix = prefix
+    set gDzArchiveJobN = n
+    set gDzArchiveJobIdx = 0
+    set gDzArchiveJobPos = 0
+    set gDzArchiveJobFile = 0
+    set gDzArchiveChunkCount = 0
+    set gDzArchiveCur = ""
+    set gDzArchiveCurLen = 0
+    set gDzArchiveJobPhase = 1
+endfunction
+
+// Ends the building: the closing marker, the limit on files, the identity tags. Phase 2 follows,
+// or phase 0 when there is nothing to write.
+function DzCompat_Archive_JobSeal takes nothing returns nothing
     local integer usable = DzCompat_Archive_Capacity()
     local integer i = 0
-    local integer n = gDzArchiveKeyCount[sid]
+    set gDzArchiveJobPhase = 0
+    if gDzArchiveChunkCount == 0 and gDzArchiveCur == "" then
+        return
+    endif
+    // the closing marker: a file that was cut short cannot then pass for a complete save
+    if gDzArchiveCurLen + StringLength(DZARCHIVE_EOF) > usable then
+        set gDzArchiveChunk[gDzArchiveChunkCount] = gDzArchiveCur
+        set gDzArchiveChunkCount = gDzArchiveChunkCount + 1
+        set gDzArchiveCur = ""
+    endif
+    set gDzArchiveChunk[gDzArchiveChunkCount] = gDzArchiveCur + DZARCHIVE_EOF
+    set gDzArchiveChunkCount = gDzArchiveChunkCount + 1
+    if gDzArchiveChunkCount > DZARCHIVE_PARTS_MAX then
+        call DzCompat_Warn("archive: the save needs " + I2S(gDzArchiveChunkCount) + " files, more than " + I2S(DZARCHIVE_PARTS_MAX) + " - nothing was written")
+        return
+    endif
+    // identity tag of every file (checked when reading) and the file count in the first one
+    loop
+        exitwhen i >= gDzArchiveChunkCount
+        set gDzArchiveChunk[i] = "#p" + I2S(i) + ";\n" + gDzArchiveChunk[i]
+        set i = i + 1
+    endloop
+    set gDzArchiveChunk[0] = "#" + I2S(gDzArchiveChunkCount) + ";\n" + gDzArchiveChunk[0]
+    set gDzArchiveJobFile = 0
+    set gDzArchiveJobPhase = 2
+endfunction
+
+// Turns the copied data into chunks until about budget characters are done, then stops where it is
+// (the next call goes on from there). Every chunk is made so its escaped text plus the "#" lines fits
+// one line. The chunks are exactly what one uninterrupted pass would make: a piece never depends on
+// where an earlier step stopped.
+function DzCompat_Archive_JobBuild takes integer budget returns nothing
+    local integer usable = DzCompat_Archive_Capacity()
     local string key
     local string val
     local string keyEnc
@@ -527,13 +631,10 @@ function DzCompat_Archive_BuildChunks takes integer sid returns integer
     local integer pos
     local integer take
     local integer valLen
-    set gDzArchiveChunkCount = 0
-    set gDzArchiveCur = ""
-    set gDzArchiveCurLen = 0
     loop
-        exitwhen i >= n
-        set key = gDzArchiveKeys[sid * DZARCHIVE_KEYS_MAX + i]
-        set val = LoadStr(gDzArchiveTable, sid, StringHash(key))
+        exitwhen gDzArchiveJobIdx >= gDzArchiveJobN or budget <= 0
+        set key = gDzArchiveJobKey[gDzArchiveJobIdx]
+        set val = gDzArchiveJobVal[gDzArchiveJobIdx]
         if val != null and val != "" then
             set keyEnc = DzCompat_Archive_Enc(key, true)
             set keyLen = StringLength(DzCompat_Archive_Esc(keyEnc))
@@ -541,7 +642,7 @@ function DzCompat_Archive_BuildChunks takes integer sid returns integer
             if overhead >= usable - 8 then
                 call DzCompat_Warn("archive: key " + key + " is too long to store - skipped")
             else
-                set pos = 0
+                set pos = gDzArchiveJobPos
                 set valLen = StringLength(val)
                 loop
                     set take = DzCompat_Archive_PieceLen(val, pos, usable - overhead)
@@ -555,54 +656,87 @@ function DzCompat_Archive_BuildChunks takes integer sid returns integer
                     endif
                     call DzCompat_Archive_AddRecord(keyEnc + "=" + flag + pieceEnc + "\n", keyLen + 2 + StringLength(DzCompat_Archive_Esc(pieceEnc)) + 1, usable)
                     set pos = pos + take
-                    exitwhen pos >= valLen
+                    set budget = budget - take - keyLen
+                    exitwhen pos >= valLen or budget <= 0
                 endloop
+                if pos < valLen then
+                    set gDzArchiveJobPos = pos           // go on with the rest of this value in the next step
+                    return
+                endif
             endif
         endif
-        set i = i + 1
+        set gDzArchiveJobIdx = gDzArchiveJobIdx + 1
+        set gDzArchiveJobPos = 0
+        set budget = budget - 1
     endloop
-    if gDzArchiveChunkCount == 0 and gDzArchiveCur == "" then
-        return 0
+    if gDzArchiveJobIdx >= gDzArchiveJobN then
+        call DzCompat_Archive_JobSeal()
     endif
-    // the closing marker: a file that was cut short cannot then pass for a complete save
-    if gDzArchiveCurLen + StringLength(DZARCHIVE_EOF) > usable then
-        set gDzArchiveChunk[gDzArchiveChunkCount] = gDzArchiveCur
-        set gDzArchiveChunkCount = gDzArchiveChunkCount + 1
-        set gDzArchiveCur = ""
-    endif
-    set gDzArchiveChunk[gDzArchiveChunkCount] = gDzArchiveCur + DZARCHIVE_EOF
-    set gDzArchiveChunkCount = gDzArchiveChunkCount + 1
-    if gDzArchiveChunkCount > DZARCHIVE_PARTS_MAX then
-        call DzCompat_Warn("archive: the save needs " + I2S(gDzArchiveChunkCount) + " files, more than " + I2S(DZARCHIVE_PARTS_MAX) + " - nothing was written")
-        return 0
-    endif
-    // identity tag of every file (checked when reading) and the file count in the first one
-    set i = 0
-    loop
-        exitwhen i >= gDzArchiveChunkCount
-        set gDzArchiveChunk[i] = "#p" + I2S(i) + ";\n" + gDzArchiveChunk[i]
-        set i = i + 1
-    endloop
-    set gDzArchiveChunk[0] = "#" + I2S(gDzArchiveChunkCount) + ";\n" + gDzArchiveChunk[0]
-    return gDzArchiveChunkCount
 endfunction
 
-// Writes the store's files under the given name prefix ("save_" for the live save).
-// Returns true when every file was written.
-function DzCompat_Archive_WriteStoreAs takes integer sid, string prefix returns boolean
-    local integer parts = DzCompat_Archive_BuildChunks(sid)
-    local integer i = 0
-    if parts < 1 then
-        return false
-    endif
+// Writes up to fileBudget chunk files. A file that cannot be written ends the job (the files after it
+// would otherwise be a mix of two saves).
+function DzCompat_Archive_JobWrite takes integer fileBudget returns nothing
     loop
-        exitwhen i >= parts
-        if not DzCompat_Archive_WriteChunkFile(DzCompat_Archive_Path(sid, prefix, i), gDzArchiveChunk[i]) then
+        exitwhen fileBudget <= 0 or gDzArchiveJobFile >= gDzArchiveChunkCount
+        if not DzCompat_Archive_WriteChunkFile(DzCompat_Archive_Path(gDzArchiveJobSid, gDzArchiveJobPrefix, gDzArchiveJobFile), gDzArchiveChunk[gDzArchiveJobFile]) then
+            set gDzArchiveJobFile = gDzArchiveChunkCount
+        else
+            set gDzArchiveJobFile = gDzArchiveJobFile + 1
+        endif
+        set fileBudget = fileBudget - 1
+    endloop
+    if gDzArchiveJobFile >= gDzArchiveChunkCount then
+        set gDzArchiveJobPhase = 0
+    endif
+endfunction
+
+// One step of the writing: starts the next job, builds some more of the current one, or writes some
+// of its files. Returns true while work is left (a job under way or jobs waiting).
+function DzCompat_Archive_Pump takes integer buildBudget, integer fileBudget returns boolean
+    if gDzArchiveJobPhase == 0 then
+        if gDzArchiveQueueCount <= 0 then
             return false
         endif
-        set i = i + 1
+        call DzCompat_Archive_JobStart()
+    endif
+    if gDzArchiveJobPhase == 1 then
+        call DzCompat_Archive_JobBuild(buildBudget)
+    endif
+    if gDzArchiveJobPhase == 2 then
+        call DzCompat_Archive_JobWrite(fileBudget)
+    endif
+    return gDzArchiveJobPhase != 0 or gDzArchiveQueueCount > 0
+endfunction
+
+// Puts a write in the queue and returns at once; the work timer does it.
+function DzCompat_Archive_Enqueue takes integer sid, string prefix returns nothing
+    local integer slot
+    if gDzArchiveQueueCount >= DZARCHIVE_QUEUE_MAX then
+        call DzCompat_Warn("archive: too many writes waiting - one was dropped")
+        return
+    endif
+    set slot = ModuloInteger(gDzArchiveQueueHead + gDzArchiveQueueCount, DZARCHIVE_QUEUE_MAX)
+    set gDzArchiveQueueSid[slot] = sid
+    set gDzArchiveQueuePrefix[slot] = prefix
+    set gDzArchiveQueueCount = gDzArchiveQueueCount + 1
+    if prefix == DZARCHIVE_SAVE_NAME then
+        set gDzArchiveQueued[sid] = true
+    endif
+endfunction
+
+function DzCompat_Archive_WorkTick takes nothing returns nothing
+    if gDzArchiveJobPhase == 0 and gDzArchiveQueueCount <= 0 then
+        return
+    endif
+    call DzCompat_Archive_Pump(DZARCHIVE_BUILD_BUDGET, DZARCHIVE_FILES_PER_STEP)
+endfunction
+
+// Finishes every write that is waiting or under way, now, in this thread.
+function DzCompat_Archive_Drain takes nothing returns nothing
+    loop
+        exitwhen not DzCompat_Archive_Pump(DZARCHIVE_NO_LIMIT, DZARCHIVE_NO_LIMIT)
     endloop
-    return true
 endfunction
 
 // ---------------------------------------------------------------------------
@@ -795,17 +929,22 @@ endfunction
 // Flushing to disk and backups
 // ---------------------------------------------------------------------------
 
-// Writes one store now, if its files are on this machine. Returns true when written.
+// Queues the live save of one store, if its files are on this machine. Returns true when queued
+// (or already waiting - the job that starts later copies the newest data anyway).
 function DzCompat_Archive_FlushStore takes integer sid returns boolean
+    set gDzArchiveDirty[sid] = false
+    set gDzArchiveWaiting[sid] = false
     if not DzCompat_Archive_IsLocalStore(sid) then
-        set gDzArchiveDirty[sid] = false
         return false
     endif
-    set gDzArchiveDirty[sid] = false
-    return DzCompat_Archive_WriteStoreAs(sid, DZARCHIVE_SAVE_NAME)
+    if not gDzArchiveQueued[sid] then
+        call DzCompat_Archive_Enqueue(sid, DZARCHIVE_SAVE_NAME)
+    endif
+    return true
 endfunction
 
-// Writes every changed store (public: KKApiEndBatchSaveArchive and "-save" flush by name).
+// Writes every changed store before it returns (public: KKApiEndBatchSaveArchive and "-save" flush by
+// name, and a map may end the game right after them). Also finishes any write that was under way.
 function DzCompat_Archive_Flush takes nothing returns nothing
     local integer sid = 0
     loop
@@ -815,43 +954,51 @@ function DzCompat_Archive_Flush takes nothing returns nothing
         endif
         set sid = sid + 1
     endloop
+    call DzCompat_Archive_Drain()
 endfunction
 
-// One store per tick, so a burst of stores never adds up to one long-running thread.
-function DzCompat_Archive_FlushTick takes nothing returns nothing
+// The delay of a store ran out.
+function DzCompat_Archive_StoreTimerTick takes nothing returns nothing
+    local timer t = GetExpiredTimer()
     local integer sid = 0
-    local boolean more = false
-    local boolean done = false
     loop
         exitwhen sid > DZARCHIVE_SHARED
-        if gDzArchiveDirty[sid] then
-            if done then
-                set more = true
-            else
+        if gDzArchiveStoreTimer[sid] == t then
+            if gDzArchiveDirty[sid] then
                 call DzCompat_Archive_FlushStore(sid)
-                set done = true
             endif
+            set t = null
+            return
         endif
         set sid = sid + 1
     endloop
-    if more then
-        call TimerStart(gDzArchiveFlushTimer, 0.05, false, function DzCompat_Archive_FlushTick)
-    endif
+    set t = null
 endfunction
 
-// Called after every change: writes now, or arms the delayed write.
-function DzCompat_Archive_ScheduleFlush takes nothing returns nothing
+// Called after every change of a store: arms (or re-arms) that store's own delay.
+function DzCompat_Archive_ScheduleFlush takes integer sid returns nothing
+    local real now
+    local real delay = DZARCHIVE_FLUSH_DELAY
     if DZARCHIVE_FLUSH_DELAY <= 0. then
         call DzCompat_Archive_Flush()
         return
     endif
-    if gDzArchiveFlushTimer == null then
-        set gDzArchiveFlushTimer = CreateTimer()
+    // (the clock and the timers exist: Save reads the store first, which sets everything up)
+    set now = TimerGetElapsed(gDzArchiveClock)
+    if not gDzArchiveWaiting[sid] then
+        set gDzArchiveWaiting[sid] = true
+        set gDzArchiveFirstDirty[sid] = now
     endif
-    call TimerStart(gDzArchiveFlushTimer, DZARCHIVE_FLUSH_DELAY, false, function DzCompat_Archive_FlushTick)
+    if now + delay > gDzArchiveFirstDirty[sid] + DZARCHIVE_FLUSH_MAX_WAIT then
+        set delay = gDzArchiveFirstDirty[sid] + DZARCHIVE_FLUSH_MAX_WAIT - now
+        if delay < 0. then
+            set delay = 0.
+        endif
+    endif
+    call TimerStart(gDzArchiveStoreTimer[sid], delay, false, function DzCompat_Archive_StoreTimerTick)
 endfunction
 
-// Snapshots every store this machine holds that changed since its last snapshot into the
+// Queues a snapshot of every store this machine holds that changed since its last snapshot into the
 // next backup slot (the oldest is overwritten - a fixed rotation, backups\b1_* .. b5_*).
 function DzCompat_Archive_CreateBackup takes nothing returns nothing
     local integer sid = 0
@@ -860,7 +1007,7 @@ function DzCompat_Archive_CreateBackup takes nothing returns nothing
     loop
         exitwhen sid > DZARCHIVE_SHARED
         if gDzArchiveStale[sid] and gDzArchiveKeyCount[sid] > 0 and DzCompat_Archive_IsLocalStore(sid) then
-            call DzCompat_Archive_WriteStoreAs(sid, prefix)
+            call DzCompat_Archive_Enqueue(sid, prefix)
             set any = true
         endif
         set gDzArchiveStale[sid] = false
@@ -882,6 +1029,7 @@ endfunction
 
 // One-time set-up: the per-map folder and the backup clock. Safe to call any number of times.
 function DzCompat_Archive_EnsureLoaded takes nothing returns nothing
+    local integer sid
     if gDzArchiveInited then
         return
     endif
@@ -895,6 +1043,17 @@ function DzCompat_Archive_EnsureLoaded takes nothing returns nothing
     endif
     set gDzArchiveClockTimer = CreateTimer()
     call TimerStart(gDzArchiveClockTimer, DZARCHIVE_TICK_SECONDS, true, function DzCompat_Archive_OnTick)
+    // every timer of the writing is created and started here, on every client alike
+    set gDzArchiveClock = CreateTimer()
+    call TimerStart(gDzArchiveClock, 1000000., false, null)
+    set gDzArchiveWorkTimer = CreateTimer()
+    call TimerStart(gDzArchiveWorkTimer, DZARCHIVE_STEP_INTERVAL, true, function DzCompat_Archive_WorkTick)
+    set sid = 0
+    loop
+        exitwhen sid > DZARCHIVE_SHARED
+        set gDzArchiveStoreTimer[sid] = CreateTimer()
+        set sid = sid + 1
+    endloop
     if DZCOMPAT_DEBUG_MESSAGES then
         call DzCompat_Archive_SelfTest()
     endif
@@ -990,7 +1149,7 @@ function DzCompat_Archive_Save takes player whichPlayer, string key, string valu
     call DzCompat_Archive_Mem(sid, key, value)
     set gDzArchiveDirty[sid] = true
     set gDzArchiveStale[sid] = true
-    call DzCompat_Archive_ScheduleFlush()
+    call DzCompat_Archive_ScheduleFlush(sid)
     return true
 endfunction
 

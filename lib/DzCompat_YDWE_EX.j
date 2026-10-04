@@ -76,6 +76,13 @@
         // ParentId values must match the switch in DzCompat_GetAbilityDataField
         // / DzCompat_GetAbilityDataFieldKind (1=Aamk, 2=ANcl, ...).
         hashtable gYDWEEXAbilityParent = InitHashtable()
+		// DATA_A..I (108-116) values written through EXSetAbilityDataReal/Integer, kept per
+        // ability rawcode (parent = abilcode, child = data_type * 100 + level; child 0 with a
+        // saved boolean marks "this rawcode has values"). In YDWE/KKAPI these natives write the
+        // ability's OBJECT DATA, so every instance added afterwards carries the value; Reforged's
+        // Blz*LevelField only changes the one instance, so the value is remembered here and
+        // re-applied by DzCompat_UnitAddAbility (see DzCompat_ApplyAbilityData).
+        hashtable gYDWEEXAbilityData = InitHashtable()
         // persistent per-itemcode work-item cache (see YDWEEX_GetCachedWorkItem)
         // - kept separate from gYDWEEXOwner/gYDWEEXLocal because it deliberately
         // uses a fixed parent key with itemcode as the child key, and mixing a
@@ -508,7 +515,102 @@
         endif
         return BlzSetAbilityIntegerLevelField(abil, ConvertAbilityIntegerLevelField(fieldId), idx, value)
     endfunction
-	
+
+    // ---- remember a DATA_A..I write so later instances of the same ability get it ----
+    // Only called after DzCompat_TrySetAbilityData* succeeded, i.e. for abilities marked by
+    // DzCompat_MarkAbilityParent. The value is stored in the slot type its field really has
+    // (integer or real), so large integer stats keep full precision.
+    function DzCompat_RememberAbilityDataReal takes integer abilcode, integer level, integer data_type, real value returns nothing
+        local integer lvl = level
+        if lvl < 1 then
+            set lvl = 1
+        endif
+        call SaveBoolean(gYDWEEXAbilityData, abilcode, 0, true)
+        if DzCompat_GetAbilityDataFieldKind(abilcode, data_type) == 1 then
+            call SaveReal(gYDWEEXAbilityData, abilcode, data_type * 100 + lvl, value)
+        else
+            call SaveInteger(gYDWEEXAbilityData, abilcode, data_type * 100 + lvl, R2I(value))
+        endif
+    endfunction
+
+    function DzCompat_RememberAbilityDataInteger takes integer abilcode, integer level, integer data_type, integer value returns nothing
+        local integer lvl = level
+        if lvl < 1 then
+            set lvl = 1
+        endif
+        call SaveBoolean(gYDWEEXAbilityData, abilcode, 0, true)
+        if DzCompat_GetAbilityDataFieldKind(abilcode, data_type) == 1 then
+            call SaveReal(gYDWEEXAbilityData, abilcode, data_type * 100 + lvl, I2R(value))
+        else
+            call SaveInteger(gYDWEEXAbilityData, abilcode, data_type * 100 + lvl, value)
+        endif
+    endfunction
+
+    // ---- [REAL, via remembered values] push the remembered DATA_A..I values onto the ability
+    // instance `u` just received. For an Aamk (stat bonus) ability the level is then bumped up
+    // and back down: Reforged only re-reads Aamk's Agility/Intelligence/Strength Bonus when the
+    // level changes, so without that the new values would not reach the hero's stats.
+    function DzCompat_ApplyAbilityData takes unit u, integer abilcode returns nothing
+        local ability a = BlzGetUnitAbility(u, abilcode)
+        local integer maxLevel = GetUnitAbilityLevel(u, abilcode)
+        local integer lvl = 1
+        local integer dt
+        local integer fieldId
+        local boolean applied = false
+        if a == null then
+            return
+        endif
+        loop
+            exitwhen lvl > maxLevel
+            set dt = 108
+            loop
+                exitwhen dt > 116
+                set fieldId = DzCompat_GetAbilityDataField(abilcode, dt)
+                if fieldId != 0 then
+                    if DzCompat_GetAbilityDataFieldKind(abilcode, dt) == 1 then
+                        if HaveSavedReal(gYDWEEXAbilityData, abilcode, dt * 100 + lvl) then
+                            call BlzSetAbilityRealLevelField(a, ConvertAbilityRealLevelField(fieldId), lvl - 1, LoadReal(gYDWEEXAbilityData, abilcode, dt * 100 + lvl))
+                            set applied = true
+                        endif
+                    else
+                        if HaveSavedInteger(gYDWEEXAbilityData, abilcode, dt * 100 + lvl) then
+                            call BlzSetAbilityIntegerLevelField(a, ConvertAbilityIntegerLevelField(fieldId), lvl - 1, LoadInteger(gYDWEEXAbilityData, abilcode, dt * 100 + lvl))
+                            set applied = true
+                        endif
+                    endif
+                endif
+                set dt = dt + 1
+            endloop
+            set lvl = lvl + 1
+        endloop
+        if applied and DzCompat_GetAbilityParentId(abilcode) == 1 then
+            // a one-level ability cannot be level-bumped, so give it a second level for the
+            // refresh and take it away again afterwards
+            set maxLevel = BlzGetAbilityIntegerField(a, ABILITY_IF_LEVELS)
+            if maxLevel < 2 then
+                call BlzSetAbilityIntegerField(a, ABILITY_IF_LEVELS, 2)
+            endif
+            call IncUnitAbilityLevel(u, abilcode)
+            call DecUnitAbilityLevel(u, abilcode)
+            if maxLevel < 2 then
+                call BlzSetAbilityIntegerField(a, ABILITY_IF_LEVELS, maxLevel)
+            endif
+        endif
+        set a = null
+    endfunction
+
+    // ---- UnitAddAbility with the YDWE "ability data is global" behaviour ----------------
+    // ForwardConverter rewrites the map's UnitAddAbility call sites to this wrapper when the map
+    // writes ability DATA_A..I (see AbilityAddConverter.java). One hashtable lookup for every
+    // ability that has no remembered data, so the wrapper is cheap on the common path.
+    function DzCompat_UnitAddAbility takes unit whichUnit, integer abilcode returns boolean
+        local boolean added = UnitAddAbility(whichUnit, abilcode)
+        if added and HaveSavedBoolean(gYDWEEXAbilityData, abilcode, 0) then
+            call DzCompat_ApplyAbilityData(whichUnit, abilcode)
+        endif
+        return added
+    endfunction
+		
 	// ---- [REAL] COST (mana cost). [PORT LIMITATION] TARGS/UNITID -----------------
     // ---- Hotkey / Researchhotkey lookup (which: 0 = Hotkey, 1 = Researchhotkey) --------
     // Populated by AbilityHotkeyRegistry's generated DzCompat_InitHotkey; called from
@@ -581,6 +683,7 @@
         elseif data_type >= 108 and data_type <= 116 then //ABILITY_DATA_DATA_A..I
             set abilcode = YDWEEX_GetAbilityCode(abil)
             if DzCompat_TrySetAbilityDataReal(abil, abilcode, idx, data_type, value) then
+			                call DzCompat_RememberAbilityDataReal(abilcode, level, data_type, value)
                 return true
             endif
         endif
@@ -633,6 +736,7 @@
         elseif data_type >= 108 and data_type <= 116 then //ABILITY_DATA_DATA_A..I
             set abilcode = YDWEEX_GetAbilityCode(abil)
             if DzCompat_TrySetAbilityDataInteger(abil, abilcode, idx, data_type, value) then
+			                call DzCompat_RememberAbilityDataInteger(abilcode, level, data_type, value)
                 return true
             endif
         endif
@@ -757,10 +861,14 @@
     // getter just returns whatever was last Set here (default 1.0, matching the
     // real native's own documented default).
     function EXGetEffectSize takes effect e returns real
+        if e == null then
+            return 1.00
+        endif
         if HaveSavedReal(gYDWEEXLocal, GetHandleId(e), 900001) then
             return LoadReal(gYDWEEXLocal, GetHandleId(e), 900001)
         endif
-        return 1.00
+        // never set through EXSetEffectSize: the effect's own scale, not a fixed 1
+        return BlzGetSpecialEffectScale(e)
     endfunction
 
     function EXSetEffectSize takes effect e, real size returns nothing
@@ -838,6 +946,34 @@
 
     function EXSetEffectSpeed takes effect e, real speed returns nothing
         call BlzSetSpecialEffectTimeScale(e, speed)
+    endfunction
+
+    // ---- effect color / visibility / animation ------------------------------------
+    // EX takes the color as ARGB (alpha in the top byte), the same layout DzSetEffectVertexColor reads. The
+    // alpha is remembered so EXSetEffectVisible(e, true) brings the effect back with it instead of fully opaque.
+    function EXSetEffectColor takes effect e, integer argb returns nothing
+        if e == null then
+            return
+        endif
+        call DzSetEffectVertexColor(e, argb)
+        call SaveInteger(gDzCompatEffectHidden, GetHandleId(e), 1, DzCompat_ColorAlpha(argb))
+    endfunction
+
+    function EXSetEffectVisible takes effect e, boolean visible returns nothing
+        local integer h
+        if e == null then
+            return
+        endif
+        set h = GetHandleId(e)
+        call DzSetEffectVisible(e, visible)
+        if visible and HaveSavedInteger(gDzCompatEffectHidden, h, 1) then
+            call BlzSetSpecialEffectAlpha(e, LoadInteger(gDzCompatEffectHidden, h, 1))
+        endif
+    endfunction
+
+    // linkName (the attachment point) has no Reforged equivalent, same as in DzPlayEffectAnimation.
+    function EXPlayEffectAnimation takes effect e, string animationName, string linkName returns nothing
+        call DzPlayEffectAnimation(e, animationName, linkName)
     endfunction
 
     // ============================================================================
@@ -1118,8 +1254,29 @@
     // ---- [REAL] BlzPauseUnitEx pauses a unit without the shift-order-queue-loss
     // and buff-suspension side effects of stock PauseUnit - matches the original
     // EX native's stated purpose exactly.
+    // EX sets a pause FLAG, it does not count pauses: pausing twice and unpausing once leaves the unit unpaused.
+    // The unit type is remembered with the pause, so a handle id reused by another unit after the first one
+    // was removed is not unpaused by mistake.
     function EXPauseUnit takes unit u, boolean flag returns nothing
-        call BlzPauseUnitEx(u, flag)
+        local integer h
+        local integer typeId
+        if u == null then
+            return
+        endif
+        set h = GetHandleId(u)
+        set typeId = GetUnitTypeId(u)
+        if flag then
+            if HaveSavedInteger(gYDWEEXLocal, h, 900102) and LoadInteger(gYDWEEXLocal, h, 900102) == typeId then
+                return
+            endif
+            call SaveInteger(gYDWEEXLocal, h, 900102, typeId)
+            call BlzPauseUnitEx(u, true)
+        elseif HaveSavedInteger(gYDWEEXLocal, h, 900102) then
+            if LoadInteger(gYDWEEXLocal, h, 900102) == typeId then
+                call BlzPauseUnitEx(u, false)
+            endif
+            call RemoveSavedInteger(gYDWEEXLocal, h, 900102)
+        endif
     endfunction
 
     // ---- [APPROX] the original's per-bit collision toggle `(1 << t)` has no
@@ -1127,6 +1284,9 @@
     // SetUnitPathing, which toggles ALL pathing collision on/off and ignores
     // which specific bit `t` was requested.
     function EXSetUnitCollisionType takes boolean enable, unit u, integer t returns nothing
+        if u == null then
+            return
+        endif
         call SetUnitPathing(u, enable)
     endfunction
 
@@ -1199,4 +1359,21 @@
             return
         endif
         call BlzDisplayChatMessage(p, chat_recipient, message)
+    endfunction
+
+    // ============================================================================
+    // Unit alias natives
+    // ============================================================================
+
+    // Plain-name aliases that some KK environments declare next to the Dz* ones.
+    function SetUnitName takes unit whichUnit, string name returns nothing
+        call DzSetUnitName(whichUnit, name)
+    endfunction
+
+    function SetUnitModel takes unit whichUnit, string path returns nothing
+        call DzSetUnitModel(whichUnit, path)
+    endfunction
+
+    function SetUnitMissileModel takes unit whichUnit, string modelFile returns nothing
+        call DzSetUnitMissileModel(whichUnit, modelFile)
     endfunction

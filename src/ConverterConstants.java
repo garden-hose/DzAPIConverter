@@ -121,6 +121,13 @@ final class ConverterConstants {
         "EXGetUnitInteger", "EXSetUnitInteger",
         "EXGetUnitArrayString", "EXSetUnitArrayString",
         "EXDisplayChat",
+        // DzCompat_YDWE_EX.j - effect color / visibility / animation, unit alias natives
+        "EXSetEffectColor", "EXSetEffectVisible", "EXPlayEffectAnimation",
+        "SetUnitName", "SetUnitModel", "SetUnitMissileModel",
+        // DzCompat_UnitEffect.j / DzCompat_Frame.j
+        "DzSetEffectAnimation", "DzSetWar3MapMap",
+        // DzCompat_StringBit.j - plain-name bit operations
+        "BitAnd", "BitOr", "BitXor", "BitShiftL", "BitShiftR",
         // DzCompat_Lua.j - EXExecuteScript (jass.slk object-data reads only)
         "EXExecuteScript",
         // RequestExtra
@@ -144,7 +151,19 @@ final class ConverterConstants {
         "DzAPI_Map_StoreString", "DzAPI_Map_StoreInteger", "DzAPI_Map_StoreReal", "DzAPI_Map_StoreBoolean",
         "DzAPI_Map_GetStoredString", "DzAPI_Map_GetStoredInteger", "DzAPI_Map_GetStoredReal", "DzAPI_Map_GetStoredBoolean",
 		// DzCompat_Core.j - a native that some environments (YDWE / AI script natives) provide
-        "UnitAlive", "DzF2I", "DzI2F", "DzK2I", "DzI2K"
+        "UnitAlive", "DzF2I", "DzI2F", "DzK2I", "DzI2K",
+        // DzCompat_JN.j - JN (JassNative) strings, base64, stopwatch, casts, login answers
+        "JNStringLength", "JNStringPos", "JNStringContains", "JNStringSub", "JNStringSplit",
+        "JNStringCount", "JNStringReverse", "JNStringTrimStart", "JNStringTrimEnd", "JNStringTrim",
+        "JNStringInsert", "JNStringReplace", "JNStringCalcLines",
+        "JNStringToBase64", "JNStringFromBase64", "JNStringBase64Encoding",
+        "JNStringEncrypt", "JNStringDecrypt",
+        "JNStopwatchCreate", "JNStopwatchStart", "JNStopwatchPause", "JNStopwatchReset",
+        "JNStopwatchDestroy", "JNStopwatchElapsedMS", "JNStopwatchElapsedSecond",
+        "JNStopwatchElapsedMinute", "JNStopwatchElapsedHour",
+        "JNI2R", "JNR2I", "JNOpenBrowser",
+        "JNGetSettingLogin", "JNGetSettingLoginID", "JNLocalLogin", "JNLogin",
+        "JNObjectCharacterServerConnectCheck", "JNGetConnectionState"
     ));
 
     static final String[] LIB_FILES = {
@@ -161,7 +180,8 @@ final class ConverterConstants {
 		"DzCompat_Lua.j",
         "DzCompat_Archive.j",
         "DzCompat_Platform.j",
-        "DzCompat_RequestExtra.j"
+        "DzCompat_RequestExtra.j",
+        "DzCompat_JN.j"
     };
 
     static final String[][] RENAME_PAIRS = {

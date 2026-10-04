@@ -152,6 +152,17 @@ final class ForwardConverter {
             }
         }
 
+        // UnitAddAbility call sites -> DzCompat_UnitAddAbility, so a hero gets the DATA_A..I
+        // values the map wrote with EXSetAbilityDataReal/Integer on an earlier instance.
+        boolean abilityAddRewritten = false;
+        if (settings.convertAbilityAddData && AbilityAddConverter.scriptWritesAbilityData(jassScript)) {
+            AbilityAddConverter.Result addResult = AbilityAddConverter.convert(jassScript);
+            jassScript = addResult.lines;
+            abilityAddRewritten = addResult.rewritten > 0;
+            logger.log("[" + Timestamps.now() + "] Ability data: rewrote " + addResult.rewritten +
+                       " UnitAddAbility call site(s) to use " + AbilityAddConverter.WRAPPER);
+        }
+
         // Collect native declarations that have real implementations
         List<Integer> nativeIndices = new ArrayList<>();
         List<String> nativeNames = new ArrayList<>();
@@ -186,6 +197,10 @@ final class ForwardConverter {
         if (extStateResult != null) {
             if (extStateResult.usedGet) neededNames.add("DzCompat_GetExtUnitState");
             if (extStateResult.usedSet) neededNames.add("DzCompat_SetExtUnitState");
+        }
+
+        if (abilityAddRewritten) {
+            neededNames.add(AbilityAddConverter.WRAPPER);
         }
 
         // EXExecuteScript is only converted when there is a table folder with table .ini

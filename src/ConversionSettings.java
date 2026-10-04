@@ -32,4 +32,9 @@ final class ConversionSettings {
      *  are rewritten to route through DzCompat_GetExtUnitState/SetExtUnitState
      *  (lib/DzCompat_ExtendedUnitState.j) instead of silently returning 0 in Reforged. */
     boolean convertExtendedUnitState = true;
+
+    /** When true, and the map writes ability DATA_A..I via EXSetAbilityDataReal/Integer,
+     *  UnitAddAbility calls are routed through DzCompat_UnitAddAbility so new ability
+     *  instances receive those values (YDWE writes object data; Reforged only the instance). */
+    boolean convertAbilityAddData = true;
 }

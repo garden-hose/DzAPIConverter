@@ -81,8 +81,15 @@ endglobals
     // confirmed correct. Note this is a counter, not a flag (see
     // BlzUnitDisableAbility docs) - repeated enable/disable calls must stay
     // balanced or it'll get stuck.
+    // Disabling also cuts off an attack already under way; the ability flag alone lets it finish.
     function DzUnitDisableAttack takes unit whichUnit, boolean disable returns nothing
+        if whichUnit == null then
+            return
+        endif
         call BlzUnitDisableAbility(whichUnit, 'Aatk', disable, false)
+        if disable then
+            call BlzUnitInterruptAttack(whichUnit)
+        endif
     endfunction
 
     // ---- DzUnitSilence -----------------------------------------------
@@ -176,6 +183,9 @@ endglobals
 
     // ---- unit name ----------------------------------------------------
     function DzSetUnitName takes unit whichUnit, string name returns nothing
+        if whichUnit == null or name == null or name == "" then
+            return
+        endif
         call BlzSetUnitName(whichUnit, name)
     endfunction
 
@@ -187,6 +197,9 @@ endglobals
     // flag it back to me if you find a technique (e.g. a specific ability field)
     // that actually changes it in-game and I'll wire it in.
     function DzGetUnitCollisionSize takes unit Unit returns real
+        if Unit == null then
+            return 0.
+        endif
         return BlzGetUnitCollisionSize(Unit)
     endfunction
 
@@ -249,12 +262,20 @@ endglobals
         call BlzSetUnitWeaponBooleanField(whichUnit, UNIT_WEAPON_BF_ATTACK_PROJECTILE_HOMING_ENABLED, 0, enable)
     endfunction
 
+    // Both weapon slots, so a unit whose second weapon is the one that attacks gets the model too.
     function DzSetUnitMissileModel takes unit whichUnit, string modelFile returns nothing
+        if whichUnit == null or modelFile == null then
+            return
+        endif
         call BlzSetUnitWeaponStringField(whichUnit, UNIT_WEAPON_SF_ATTACK_PROJECTILE_ART, 0, modelFile)
+        call BlzSetUnitWeaponStringField(whichUnit, UNIT_WEAPON_SF_ATTACK_PROJECTILE_ART, 1, modelFile)
     endfunction
 
     // ---- hero proper name -------------------------------------------
     function DzSetUnitProperName takes unit whichUnit, string name returns nothing
+        if whichUnit == null or name == null or name == "" then
+            return
+        endif
         call BlzSetHeroProperName(whichUnit, name)
     endfunction
 
@@ -289,6 +310,9 @@ endglobals
 
     // ---- effect scale ----------------------------------------------------
     function DzSetEffectScale takes effect whichHandle, real scale returns nothing
+        if whichHandle == null then
+            return
+        endif
         call BlzSetSpecialEffectScale(whichHandle, scale)
     endfunction
 
@@ -298,6 +322,29 @@ endglobals
             return
         endif
         call BlzSetSpecialEffectAnimation(whichEffect, anim)
+    endfunction
+
+    // [APPROX] Dz played an effect's sequence by its index in the model. Reforged only plays a special effect's
+    // sequences by animtype (BlzPlaySpecialEffect), and the model's own sequence list is not readable from JASS, so the
+    // index is mapped to the animtype the common KK effect models use for it: 1 = death, 2 = birth, 3 = attack,
+    // 4 = walk, anything else (0 included) = stand. flag has no Reforged equivalent.
+    function DzSetEffectAnimation takes effect whichEffect, integer index, integer flag returns nothing
+        local integer animType
+        if whichEffect == null then
+            return
+        endif
+        if index == 1 then
+            set animType = 1 // ANIM_TYPE_DEATH
+        elseif index == 2 then
+            set animType = 0 // ANIM_TYPE_BIRTH
+        elseif index == 3 then
+            set animType = 6 // ANIM_TYPE_ATTACK
+        elseif index == 4 then
+            set animType = 5 // ANIM_TYPE_WALK
+        else
+            set animType = 4 // ANIM_TYPE_STAND
+        endif
+        call BlzPlaySpecialEffect(whichEffect, ConvertAnimType(animType))
     endfunction
 
     // Reforged cannot hide a special effect. Alpha 0 alone leaves particles and additive layers on screen, so

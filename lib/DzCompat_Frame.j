@@ -164,8 +164,14 @@
         return DzCompat_RegisterFrameNamed(BlzCreateFrame(frame, DzCompat_GetOwnerFrame(parent), 0, id), frame, id)
     endfunction
 
+    // Falls back to a normal frame when the name is not a simple-frame template.
     function DzCreateSimpleFrame takes string frame, integer parent, integer id returns integer
-        return DzCompat_RegisterFrameNamed(BlzCreateSimpleFrame(frame, DzCompat_GetOwnerFrame(parent), id), frame, id)
+        local framehandle owner = DzCompat_GetOwnerFrame(parent)
+        local framehandle created = BlzCreateSimpleFrame(frame, owner, id)
+        if created == null then
+            set created = BlzCreateFrame(frame, owner, 0, id)
+        endif
+        return DzCompat_RegisterFrameNamed(created, frame, id)
     endfunction
 
     // Creates the frame, trying progressively simpler forms until the engine returns one:
@@ -339,6 +345,14 @@ endfunction
     // buttonId: 0=Signal, 1=Terrain, 2=Ally filter, 3=Creep filter, 4=Formation
     function DzFrameGetMinimapButton takes integer buttonId returns integer
         return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_MINIMAP_BUTTON, buttonId))
+    endfunction
+
+    // Replaces the minimap's terrain picture with the given image file.
+    function DzSetWar3MapMap takes string map returns nothing
+        if map == null or map == "" then
+            return
+        endif
+        call BlzChangeMinimapTerrainTex(map)
     endfunction
 
     function DzFrameGetTooltip takes nothing returns integer
@@ -542,9 +556,13 @@ endfunction
 
     function DzFrameSetTexture takes integer frame, string texture, integer flag returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
-        if f != null then
-            call BlzFrameSetTexture(f, texture, flag, true)
+        if f == null then
+            return
         endif
+        if texture == null then
+            set texture = ""
+        endif
+        call BlzFrameSetTexture(f, texture, flag, true)
     endfunction
 
     // [APPROX] Dz's 4th param ("flag") has nowhere to go: the real native is
@@ -556,9 +574,13 @@ endfunction
     // and rely on it doing something, that will probably not work properly
     function DzFrameSetModel takes integer frame, string modelFile, integer modelType, integer flag returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
-        if f != null and modelFile != null then
-            call BlzFrameSetModel(f, modelFile, modelType)
+        if f == null then
+            return
         endif
+        if modelFile == null then
+            set modelFile = ""
+        endif
+        call BlzFrameSetModel(f, modelFile, modelType)
     endfunction
 
     function DzFrameSetVertexColor takes integer frame, integer color returns nothing
@@ -592,9 +614,13 @@ endfunction
 
     function DzFrameSetText takes integer frame, string text returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
-        if f != null then
-            call BlzFrameSetText(f, text)
+        if f == null then
+            return
         endif
+        if text == null then
+            set text = ""
+        endif
+        call BlzFrameSetText(f, text)
     endfunction
 
     function DzFrameGetText takes integer frame returns string
@@ -607,9 +633,13 @@ endfunction
 
     function DzFrameAddText takes integer frame, string text returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
-        if f != null then
-            call BlzFrameAddText(f, text)
+        if f == null then
+            return
         endif
+        if text == null then
+            set text = ""
+        endif
+        call BlzFrameAddText(f, text)
     endfunction
 
     function DzFrameSetTextColor takes integer frame, integer color returns nothing
@@ -668,9 +698,13 @@ endfunction
 
     function DzFrameSetFont takes integer frame, string fileName, real height, integer flag returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
-        if f != null then
-            call BlzFrameSetFont(f, fileName, height, flag)
+        if f == null then
+            return
         endif
+        if fileName == null then
+            set fileName = ""
+        endif
+        call BlzFrameSetFont(f, fileName, height, flag)
     endfunction
 
     function DzFrameGetName takes integer frame returns string
