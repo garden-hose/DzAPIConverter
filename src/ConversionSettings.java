@@ -21,6 +21,13 @@ final class ConversionSettings {
      *  every line of the converted map script. Off by default (and in CLI mode). */
     boolean removeIndentation = false;
 
+    /** When true, the local archive save system is stubbed out: the save/load natives
+     *  (DzAPI_Map_SaveServerValue, GetServerValue, Store*, GetStored*, and the archive-backed
+     *  GetMapLevel/HasMallItem/GetGuildName) become neutral stubs, and the archive's entry points
+     *  used by RequestExtra*Data do nothing. Nothing is saved and no file is written to the
+     *  user's system. Off by default (and in CLI mode). */
+    boolean removeLocalSave = false;
+
     /** When true, right after "Clear unused natives" the script is checked against the names
      *  Reforged's common.j already declares: native declarations of natives that exist in
      *  Reforged are dropped, and globals the map declares under a common.j name are removed

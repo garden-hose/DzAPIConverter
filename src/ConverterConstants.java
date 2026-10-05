@@ -166,6 +166,27 @@ final class ConverterConstants {
         "JNObjectCharacterServerConnectCheck", "JNGetConnectionState"
     ));
 
+    /** Natives that read or write the local archive (DzCompat_Archive.j). With "Remove local
+     *  save" on they are never given a real implementation: they are stubbed like any other
+     *  unimplemented native, so nothing is saved and no file is written.
+     *  (The UNLOCK_GATED_NATIVES below are archive-backed too and are stubbed as well.) */
+    static final Set<String> LOCAL_SAVE_NATIVES = new LinkedHashSet<>(Arrays.asList(
+        "DzAPI_Map_SaveServerValue", "DzAPI_Map_GetServerValue",
+        "DzAPI_Map_GetServerValueErrorCode",
+        "DzAPI_Map_StoreString", "DzAPI_Map_StoreInteger", "DzAPI_Map_StoreReal", "DzAPI_Map_StoreBoolean",
+        "DzAPI_Map_GetStoredString", "DzAPI_Map_GetStoredInteger", "DzAPI_Map_GetStoredReal", "DzAPI_Map_GetStoredBoolean"
+    ));
+
+    /** With "Remove local save" on, these archive functions are replaced by empty bodies. They are
+     *  the only doors into the archive (everything else - RequestExtra*Data save/load types,
+     *  DzServer_* helpers - goes through them), so with them empty the rest of DzCompat_Archive.j
+     *  is never pulled into the output. */
+    static final String[][] LOCAL_SAVE_ENTRY_STUBS = {
+        {"DzCompat_Archive_Save",  "function DzCompat_Archive_Save takes player whichPlayer, string key, string value returns boolean", "    return false"},
+        {"DzCompat_Archive_Load",  "function DzCompat_Archive_Load takes player whichPlayer, string key returns string", "    return \"\""},
+        {"DzCompat_Archive_Flush", "function DzCompat_Archive_Flush takes nothing returns nothing", null}
+    };
+
     static final String[] LIB_FILES = {
         "DzCompat_Core.j",
         "DzCompat_Frame.j",

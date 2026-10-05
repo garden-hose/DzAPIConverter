@@ -176,6 +176,7 @@ final class ForwardConverter {
         }
 
         Set<String> neededNames = new LinkedHashSet<>();
+        Set<String> localSaveStubbed = new LinkedHashSet<>(); // natives stubbed by "Remove local save"
         int realCount = 0;
         for (String name : nativeNames) {
             if (name == null) continue;
@@ -183,6 +184,14 @@ final class ForwardConverter {
             // These three route to real implementations only when Override is off.
             if (!settings.unlockStubs && ConverterConstants.UNLOCK_GATED_NATIVES.contains(name)) {
                 implemented = true;
+            }
+            // "Remove local save": the archive-backed natives are never implemented - they are
+            // stubbed below instead, so nothing is saved and no file is written.
+            if (settings.removeLocalSave && implemented
+                    && (ConverterConstants.LOCAL_SAVE_NATIVES.contains(name)
+                        || ConverterConstants.UNLOCK_GATED_NATIVES.contains(name))) {
+                implemented = false;
+                localSaveStubbed.add(name);
             }
             if (implemented) {
                 neededNames.add(name);
@@ -234,6 +243,11 @@ final class ForwardConverter {
         }
         logger.log("[" + Timestamps.now() + "] Found " + realCount +
                    " native declarations with real Reforged-compatible implementations");
+        if (settings.removeLocalSave) {
+            logger.log("[" + Timestamps.now() + "] Remove local save: archive save/load is stubbed out - nothing will be saved " +
+                       "and no file will be written (" + localSaveStubbed.size() + " declared native(s) stubbed" +
+                       (localSaveStubbed.isEmpty() ? "" : ": " + String.join(", ", localSaveStubbed)) + ")");
+        }
 
         logger.log("[Converter is processing. Don't close...]");
 
@@ -288,13 +302,32 @@ final class ForwardConverter {
                 continue;
             }
             ParsedLib pl = LibraryParser.parseLibFile(p);
-            for (Segment seg : pl.segments) {
+            for (Segment parsed : pl.segments) {
+                Segment seg = settings.removeLocalSave ? localSaveEntryStub(parsed) : parsed;
                 if (seg.name != null) {
                     segmentByName.put(seg.name, seg);
                     segmentsInLibOrder.add(seg);
                 }
             }
             allGlobals.putAll(pl.globals);
+        }
+
+        // "Remove local save": a stubbed native that another library function still calls (for
+        // example RequestExtra*Data -> DzAPI_Map_GetMapLevel) must be declared before that caller,
+        // so its library copy is swapped for the same neutral stub the native line would get.
+        // A stub nobody calls is not emitted here; it stays at the native's own line.
+        if (settings.removeLocalSave) {
+            for (int k = 0; k < nativeNames.size(); k++) {
+                String name = nativeNames.get(k);
+                if (name == null || !localSaveStubbed.contains(name) || !segmentByName.containsKey(name)) continue;
+                List<String> stubLines = new ArrayList<>(stubGenerator.convert(jassScript.get(nativeIndices.get(k))));
+                stubLines.add("");
+                Segment stubSeg = new Segment(name, stubLines);
+                segmentByName.put(name, stubSeg);
+                for (int j = 0; j < segmentsInLibOrder.size(); j++) {
+                    if (name.equals(segmentsInLibOrder.get(j).name)) segmentsInLibOrder.set(j, stubSeg);
+                }
+            }
         }
 
         Set<String> allFunctionNames = segmentByName.keySet();
@@ -432,6 +465,11 @@ final class ForwardConverter {
                     continue;
                 } else {
                     stubCount++;
+                    if (name != null && localSaveStubbed.contains(name)) {
+                        // Stubbed on purpose by "Remove local save" - not a missing implementation.
+                        finalOutput.addAll(stubGenerator.convert(line));
+                        continue;
+                    }
                     if (name != null) {
                         unknownNatives.add(name);
                     } else {
@@ -564,5 +602,21 @@ final class ForwardConverter {
                 }
             }
         }
+    }
+
+    /** With "Remove local save" on: the empty replacement for one of the archive's entry points,
+     *  or the segment itself when it is not one of them. */
+    private static Segment localSaveEntryStub(Segment seg) {
+        for (String[] stub : ConverterConstants.LOCAL_SAVE_ENTRY_STUBS) {
+            if (stub[0].equals(seg.name)) {
+                List<String> lines = new ArrayList<>();
+                lines.add(stub[1]);
+                if (stub[2] != null) lines.add(stub[2]);
+                lines.add("endfunction");
+                lines.add("");
+                return new Segment(seg.name, lines);
+            }
+        }
+        return seg;
     }
 }

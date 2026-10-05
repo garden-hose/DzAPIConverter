@@ -43,6 +43,8 @@ final class MainWindow {
 	private final JCheckBox clearUnusedNativesCheckbox = new JCheckBox("Clear unused natives", true);
     /** When checked, Convert strips leading spaces/tabs from every line of the converted script. */
     private final JCheckBox removeIndentationCheckbox = new JCheckBox("Remove indentation", false);
+    /** When checked, Convert stubs out the archive save system: nothing is saved, no file is written. */
+    private final JCheckBox removeLocalSaveCheckbox = new JCheckBox("Remove local save", false);
     private final JTextArea consoleArea = new JTextArea();
     private final JFileChooser fileChooser = new JFileChooser();
 
@@ -188,10 +190,14 @@ final class MainWindow {
             "in the script but never used anywhere else.");
         removeIndentationCheckbox.setToolTipText(
             "Convert only: strips leading spaces and tabs from every line of the converted map script.");
+        removeLocalSaveCheckbox.setToolTipText(
+            "Convert only: stubs out the natives of the archive save system (SaveServerValue, GetServerValue, " +
+            "Store*/GetStored*, ...), so nothing is saved and no file is written to your system.");
         buttonPanel.add(convertButton);
         buttonPanel.add(reverseButton);
         buttonPanel.add(clearUnusedNativesCheckbox);
         buttonPanel.add(removeIndentationCheckbox);
+        buttonPanel.add(removeLocalSaveCheckbox);
         buttonPanel.setBorder(new EmptyBorder(10, 0, 6, 0));
 
         JPanel north = new JPanel(new BorderLayout());
@@ -314,6 +320,7 @@ final class MainWindow {
         settings.unlockStubs = unlockCheckbox.isSelected();
         settings.clearUnusedNatives = clearUnusedNativesCheckbox.isSelected();
         settings.removeIndentation = removeIndentationCheckbox.isSelected();
+        settings.removeLocalSave = removeLocalSaveCheckbox.isSelected();
 
         // Save settings after reading UI values
         saveSettings();
@@ -326,6 +333,7 @@ final class MainWindow {
         log("Map table path: " + (tablePath.isEmpty() ? "(none - EXExecuteScript will not be converted)" : tablePath));
         log("Clear unused natives = " + settings.clearUnusedNatives);
         log("Remove indentation = " + settings.removeIndentation);
+        log("Remove local save = " + settings.removeLocalSave);
         log("Overrides = " + settings.unlockStubs);
 
         // Run conversion off the EDT
@@ -439,6 +447,8 @@ final class MainWindow {
             props.getProperty("clearUnusedNatives", "true")));
         removeIndentationCheckbox.setSelected(Boolean.parseBoolean(
             props.getProperty("removeIndentation", "false")));
+        removeLocalSaveCheckbox.setSelected(Boolean.parseBoolean(
+            props.getProperty("removeLocalSave", "false")));
 
         // Apply the Unlock gate last, so it locks/unlocks the fields only
         // after their saved values have been restored.
@@ -455,6 +465,7 @@ final class MainWindow {
         props.setProperty("unlockStubs", Boolean.toString(unlockCheckbox.isSelected()));
         props.setProperty("clearUnusedNatives", Boolean.toString(clearUnusedNativesCheckbox.isSelected()));
         props.setProperty("removeIndentation", Boolean.toString(removeIndentationCheckbox.isSelected()));
+        props.setProperty("removeLocalSave", Boolean.toString(removeLocalSaveCheckbox.isSelected()));
         props.setProperty("stubHasMallItem", (hasMallItemCombo.getSelectedItem() != null) ? hasMallItemCombo.getSelectedItem().toString() : "true");
         Object levelVal = getMapLevelSpinner.getValue();
         props.setProperty("stubGetMapLevel", (levelVal instanceof Number) ? levelVal.toString() : "99");

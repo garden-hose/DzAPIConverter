@@ -23,6 +23,7 @@
 - Reverse Functions - Returns converted "function"(s) back to "native"(s)
 - Clear unused natives - Removes natives that are declared but never used
 - Remove indentation - Self-explanatory
+- Remove local save - Stubs out the archive save system natives (SaveServerValue, GetServerValue, Store*/GetStored*, ...). Nothing is saved and no file is written to your system. Off by default
 
 # Notes about the frequently used natives DzSetUnitModel, EXExecuteScript, etc:
 - These require the user to extract the map tables (unit.ini, item.ini, ability.ini, etc) and convert them to .ini using w3x2lni
