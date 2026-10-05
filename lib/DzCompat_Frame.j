@@ -44,11 +44,43 @@
         // Cached GameUI origin frame (see DzCompat_GetGameUI).
         framehandle gDzCompatGameUI = null
     	framehandle gDzStableParent = null
+        // one-shot guard for the optional placement tests (DZCOMPAT_DEBUG_SCREEN)
+        boolean gDzCompatDbgDone = false
+        integer gDzCompatDbgLog = 0
+        framehandle gDzCompatEdgeOwner = null
 
         // (frame id, event id) -> the trigger DzFrameSetScriptByCode built for it.
         // DzAPI keeps ONE script per frame and event, so setting it again must replace
         // the earlier one instead of stacking a second callback on top of it.
         hashtable gDzCompatFrameEvt = InitHashtable()
+
+        // ---- single-line TEXT frame auto-fit -------------------------------
+        // A Dz TEXT frame never wraps or clips: a label longer than the width the map gave
+        // it just draws past the edge. A Reforged TEXT frame wraps at its width, and on a
+        // one-line-tall frame the wrapped text ends up clipped, so a longer label shows as
+        // blank (seen with "Critical Hit Damage:140%" in a .1 x .01 frame). To keep Dz
+        // behaviour, DzCompat_TextFit widens such a frame to its text. It only ever grows
+        // the width, it keeps the text where the map put it (see DzCompat_TextFit), and it
+        // leaves tall (multi-line) frames and text that contains a line break alone.
+        // Per-frame data lives in gDzCompatTextFit, keyed by Dz frame id:
+        //   0 isText   1 requested w   2 requested h   3 map called DzFrameSetSize
+        //   4 point kind (0 none, 1 absolute, 2 relative)   5 point   6 relative frame id
+        //   7 relative point   8 x   9 y   11 frame has more than one anchor (skip it)
+        //   12 font height (0 = default)   13 horizontal justify (0 = default, left)
+        //   15 width last applied
+        hashtable gDzCompatTextFit = InitHashtable()
+        // Set to false to turn the auto-fit off.
+        constant boolean DZCOMPAT_TEXT_AUTOFIT = true
+        // Estimated width of one character, as a fraction of the font height. Measured
+        // loosely: 24 characters did not fit a .1 wide frame at the default font size and
+        // 21 did, i.e. about .0042-.0048 per character, so .5 (= .005) errs slightly wide.
+        // A frame that is too wide is harmless; one that is too narrow wraps.
+        constant real DZCOMPAT_TEXT_CHAR_W_RATIO = 0.50
+        // Font height assumed when the map never called DzFrameSetFont.
+        constant real DZCOMPAT_TEXT_DEFAULT_FONT_H = 0.01
+        // A frame taller than this many font heights is a deliberate multi-line box and is
+        // not touched.
+        constant real DZCOMPAT_TEXT_MAX_LINES_H = 2.5
 
         // ---- click handling ------------------------------------------------
         // In Reforged a click on a frame is reported as CONTROL_CLICK (1), as MOUSE_UP (4),
@@ -70,6 +102,20 @@
         // Reforged (it still reports mouse enter/leave); GLUETEXTBUTTON does. When true,
         // DzCreateFrameByTagName falls back to GLUETEXTBUTTON for such a BUTTON.
         constant boolean DZCOMPAT_BUTTON_AS_GLUE_BUTTON = true
+        // Placement tests for the screen-edge fix: when true, the first time a map anchors a
+        // frame to the GameUI this prints the client size, the margin in use and a legend, draws
+        // the test strips (see DzCompat_DebugScreenTests) and logs the first anchors the map sets.
+        // The lines stay on screen for a minute. Leave false in releases.
+        constant boolean DZCOMPAT_DEBUG_SCREEN = false
+        // The screen-edge fix. A frame whose parent is the GameUI is not drawn once it lies outside
+        // the 4:3 area, so with this on (1) a Dz anchor to the GameUI is widened by the margin the
+        // real screen has beside the 4:3 area (DzCompat_AnchorX), (2) frames the map creates under
+        // the GameUI get DZCOMPAT_EDGE_OWNER as their parent instead, and (3) the hero bar proxy
+        // follows the real hero button. The placement test showed that children of
+        // ConsoleUIBackdrop are drawn at the screen edge, while children of the GameUI, the world
+        // frame, ConsoleUI, ConsoleTopBar, ConsoleBottomBar and the hero button are not.
+        constant boolean DZCOMPAT_EDGE_SHIFT = true
+        constant string DZCOMPAT_EDGE_OWNER = "ConsoleUIBackdrop"
 
 		// ---- deferred hover registration -----------------------------------
 		// FRAMEEVENT_MOUSE_ENTER/MOUSE_LEAVE silently never fire if the native
@@ -149,15 +195,336 @@
         return DzCompat_GetGameUI()
     endfunction
 
+    // In KKAPI/Dz the GameUI frame spans the WHOLE screen, so x = 0 relative to it is the screen
+    // edge. In Reforged the GameUI origin frame is only the centred 4:3 area (0.8 x 0.6), so on a
+    // widescreen display x = 0 lands inside the screen (12.5% in on 16:9). Reforged will not take
+    // an absolute point outside 0..0.8 (the frame falls back to filling its parent), and neither
+    // the world frame nor a child frame reaches further than the GameUI. What does work is an
+    // offset relative to the GameUI, so a Dz anchor to the GameUI is widened by the margin the
+    // real screen has on each side of the 4:3 area: left-edge points move left, right-edge
+    // points move right, centre points stay.
+    // The margin is read from the client size (height is 0.6 units, so width = 0.6 * w / h).
+    function DzCompat_ScreenMargin takes nothing returns real
+        local integer cw = BlzGetLocalClientWidth()
+        local integer ch = BlzGetLocalClientHeight()
+        local real m
+        if cw <= 0 or ch <= 0 then
+            return 0.
+        endif
+        set m = (0.6 * I2R(cw) / I2R(ch) - 0.8) / 2.
+        if m < 0. then
+            return 0.
+        endif
+        return m
+    endfunction
+
+    // The frame that owns frames a map creates under the GameUI: DZCOMPAT_EDGE_OWNER when the
+    // edge fix is on and that frame exists, the GameUI itself otherwise.
+    function DzCompat_EdgeOwner takes nothing returns framehandle
+        if not DZCOMPAT_EDGE_SHIFT then
+            return DzCompat_GetGameUI()
+        endif
+        if gDzCompatEdgeOwner == null then
+            set gDzCompatEdgeOwner = BlzGetFrameByName(DZCOMPAT_EDGE_OWNER, 0)
+            if gDzCompatEdgeOwner == null then
+                set gDzCompatEdgeOwner = DzCompat_GetGameUI()
+            endif
+        endif
+        return gDzCompatEdgeOwner
+    endfunction
+
+    function DzCompat_DbgB takes boolean b returns string
+        if b then
+            return "1"
+        endif
+        return "0"
+    endfunction
+
+    function DzCompat_DbgSize takes framehandle f returns string
+        if f == null then
+            return "n/a"
+        endif
+        return R2S(BlzFrameGetWidth(f)) + " x " + R2S(BlzFrameGetHeight(f))
+    endfunction
+
+    // Debug: a semi-transparent coloured strip owned by `par`; `color` picks TeamColor0<color>.
+    function DzCompat_MakeDebugStrip takes string name, framehandle par, integer color, real w, real h returns framehandle
+        local framehandle m = BlzCreateFrameByType("BACKDROP", name, par, "", 0)
+        if m != null then
+            call BlzFrameSetSize(m, w, h)
+            call BlzFrameSetTexture(m, "ReplaceableTextures\\TeamColor\\TeamColor0" + I2S(color) + ".blp", 0, true)
+            call BlzFrameSetAlpha(m, 170)
+        endif
+        return m
+    endfunction
+
+    // Debug: one line of text that stays for a minute (the default message time is a few seconds).
+    function DzCompat_DbgSay takes string msg returns nothing
+        call DisplayTimedTextToPlayer(GetLocalPlayer(), 0., 0., 60., msg)
+    endfunction
+
+    // Debug: test candidate parent number i (see the legend printed by DzCompat_DebugScreenTests).
+    function DzCompat_DebugCandidate takes integer i returns framehandle
+        if i == 0 then
+            return DzCompat_GetGameUI()
+        elseif i == 1 then
+            return BlzGetOriginFrame(ORIGIN_FRAME_WORLD_FRAME, 0)
+        elseif i == 2 then
+            return BlzGetFrameByName("ConsoleUI", 0)
+        elseif i == 3 then
+            return BlzGetFrameByName("ConsoleUIBackdrop", 0)
+        elseif i == 4 then
+            return BlzGetFrameByName("ConsoleTopBar", 0)
+        elseif i == 5 then
+            return BlzGetFrameByName("ConsoleBottomBar", 0)
+        elseif i == 6 then
+            return BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, 0)
+        elseif i == 7 then
+            if BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, 0) != null then
+                return BlzFrameGetParent(BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, 0))
+            endif
+        endif
+        return null
+    endfunction
+
+    function DzCompat_DebugLabel takes integer i returns string
+        if i == 0 then
+            return "GameUI"
+        elseif i == 1 then
+            return "world frame"
+        elseif i == 2 then
+            return "ConsoleUI"
+        elseif i == 3 then
+            return "ConsoleUIBackdrop"
+        elseif i == 4 then
+            return "ConsoleTopBar"
+        elseif i == 5 then
+            return "ConsoleBottomBar"
+        elseif i == 6 then
+            return "hero button 0"
+        endif
+        return "parent of hero button 0"
+    endfunction
+
+    // Debug. Eight strips, one per candidate parent, all pinned to the GameUI top-left with a
+    // -0.13 offset (that is outside the 4:3 area, at px 6 on a 1920x1080 window), stacked by
+    // 0.07 down from the top. A strip is visible only if its parent does not clip it, so the
+    // visible ones name the parents that can hold frames at the screen edge. Colours:
+    // 0 red 1 blue 2 teal 3 purple 4 yellow 5 orange 6 green 7 pink.
+    // Controls: S1 and S2 sit inside the 4:3 area and must be visible, P1 straddles its edge
+    // (0.05 wide, 0.03 outside): only the 0.02 inside part showing means clipping to the GameUI.
+    function DzCompat_DebugScreenTests takes nothing returns nothing
+        local framehandle par
+        local framehandle m
+        local integer i = 0
+        local real margin = DzCompat_ScreenMargin()
+        call DzCompat_DbgSay("DzCompat: client " + I2S(BlzGetLocalClientWidth()) + "x" + I2S(BlzGetLocalClientHeight()) + ", margin per side " + R2S(margin) + ", edge shift " + DzCompat_DbgB(DZCOMPAT_EDGE_SHIFT))
+        loop
+            exitwhen i > 7
+            set par = DzCompat_DebugCandidate(i)
+            if par == null then
+                call DzCompat_DbgSay("C" + I2S(i) + " " + DzCompat_DebugLabel(i) + ": NOT FOUND")
+            else
+                call DzCompat_DbgSay("C" + I2S(i) + " " + DzCompat_DebugLabel(i) + ": visible " + DzCompat_DbgB(BlzFrameIsVisible(par)) + ", alpha " + I2S(BlzFrameGetAlpha(par)) + ", size " + DzCompat_DbgSize(par))
+                set m = DzCompat_MakeDebugStrip("DzCompatDbgC" + I2S(i), par, i, 0.01, 0.06)
+                if m != null then
+                    call BlzFrameSetPoint(m, FRAMEPOINT_TOPLEFT, DzCompat_GetGameUI(), FRAMEPOINT_TOPLEFT, -0.13, -0.05 - 0.07 * I2R(i))
+                    // (strip drawn)
+                else
+                    call DzCompat_DbgSay("   strip C" + I2S(i) + " NOT CREATED")
+                endif
+            endif
+            set i = i + 1
+        endloop
+        // S1 teal: control, GameUI child inside the 4:3 area (0.02 right of its left edge)
+        set m = DzCompat_MakeDebugStrip("DzCompatDbgS1", DzCompat_GetGameUI(), 2, 0.01, 0.06)
+        if m != null then
+            call BlzFrameSetPoint(m, FRAMEPOINT_TOPLEFT, DzCompat_GetGameUI(), FRAMEPOINT_TOPLEFT, 0.02, -0.5)
+        endif
+        // S2 yellow: control, same but from the absolute point (0.04, 0.1)
+        set m = DzCompat_MakeDebugStrip("DzCompatDbgS2", DzCompat_GetGameUI(), 4, 0.01, 0.06)
+        if m != null then
+            call BlzFrameSetAbsPoint(m, FRAMEPOINT_TOPLEFT, 0.04, 0.1)
+        endif
+        // P1 pink: straddles the left edge, from -0.03 to 0.02
+        set m = DzCompat_MakeDebugStrip("DzCompatDbgP1", DzCompat_GetGameUI(), 7, 0.05, 0.06)
+        if m != null then
+            call BlzFrameSetPoint(m, FRAMEPOINT_TOPLEFT, DzCompat_GetGameUI(), FRAMEPOINT_TOPLEFT, -0.03, -0.38)
+        endif
+        // H1 yellow, H3 orange, H6 green: a 0.015 x 0.038 marker 0.045 to the right of the top-left
+        // corner of the REAL hero buttons 1, 3 and 6. Hidden buttons may not be laid out at all,
+        // so this shows where (and whether) they really are.
+        set i = 1
+        loop
+            exitwhen i > 6
+            set par = BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, i)
+            if par != null then
+                set m = DzCompat_MakeDebugStrip("DzCompatDbgH" + I2S(i), DzCompat_EdgeOwner(), 3 + (i + 1) / 2, 0.015, 0.038)
+                if m != null then
+                    call BlzFrameSetPoint(m, FRAMEPOINT_TOPLEFT, par, FRAMEPOINT_TOPLEFT, 0.045, 0.)
+                endif
+                call DzCompat_DbgSay("H" + I2S(i) + " real hero button " + I2S(i) + ": visible " + DzCompat_DbgB(BlzFrameIsVisible(par)) + ", size " + DzCompat_DbgSize(par))
+            endif
+            if i == 3 then
+                set i = 6
+            else
+                set i = i + 2
+            endif
+        endloop
+        call DzCompat_DbgSay("Edge owner for frames created under the GameUI: " + DZCOMPAT_EDGE_OWNER + " (in use " + DzCompat_DbgB(DzCompat_EdgeOwner() != DzCompat_GetGameUI()) + ")")
+        call DzCompat_DbgSay("Controls: S1 teal and S2 yellow must show inside the 4:3 area; P1 pink straddles its left edge")
+        set m = null
+        set par = null
+    endfunction
+
+    // The x offset to use for an anchor to frame r at relativePoint (0..8, Dz numbering: 0 top-
+    // left, 1 top, 2 top-right, 3 left, 4 centre, 5 right, 6 bottom-left, 7 bottom, 8 bottom-
+    // right). Anything but the GameUI is returned unchanged, and so is everything while
+    // DZCOMPAT_EDGE_SHIFT is false.
+    function DzCompat_AnchorX takes framehandle r, integer relativePoint, real x returns real
+        if r != DzCompat_GetGameUI() then
+            return x
+        endif
+        if DZCOMPAT_DEBUG_SCREEN and not gDzCompatDbgDone then
+            set gDzCompatDbgDone = true
+            call DzCompat_DebugScreenTests()
+        endif
+        if not DZCOMPAT_EDGE_SHIFT then
+            return x
+        endif
+        if relativePoint == 0 or relativePoint == 3 or relativePoint == 6 then
+            return x - DzCompat_ScreenMargin()
+        elseif relativePoint == 2 or relativePoint == 5 or relativePoint == 8 then
+            return x + DzCompat_ScreenMargin()
+        endif
+        return x
+    endfunction
+
     // The frame that should own a new frame. A parent id that is 0 or does not name a
     // frame (for example one that was already destroyed) falls back to the GameUI, so a
     // frame is never created with a null owner.
     function DzCompat_GetOwnerFrame takes integer parent returns framehandle
         local framehandle f = DzCompat_GetFrame(parent)
-        if f == null then
-            return DzCompat_GetGameUI()
+        if f == null or f == DzCompat_GetGameUI() then
+            return DzCompat_EdgeOwner()
         endif
         return f
+    endfunction
+
+    // ---- single-line TEXT frame auto-fit helpers (see gDzCompatTextFit) ------
+    // Visible character count of a label: |cAARRGGBB and |r are not drawn. Returns -1 when
+    // the text has a line break (|n), meaning the map wants more than one line.
+    // JASS strings are indexed by byte, so a non-ASCII character counts as several
+    // characters; that only makes the estimate wider, which is the safe direction.
+    function DzCompat_TextVisibleLen takes string text returns integer
+        local integer i = 0
+        local integer n = StringLength(text)
+        local integer count = 0
+        local string c
+        local string d
+        loop
+            exitwhen i >= n
+            set c = SubString(text, i, i + 1)
+            if c == "|" and i + 1 < n then
+                set d = StringCase(SubString(text, i + 1, i + 2), false)
+                if d == "c" then
+                    set i = i + 10
+                elseif d == "r" then
+                    set i = i + 2
+                elseif d == "n" then
+                    return -1
+                else
+                    set count = count + 1
+                    set i = i + 1
+                endif
+            elseif c == "\n" then
+                return -1
+            else
+                set count = count + 1
+                set i = i + 1
+            endif
+        endloop
+        return count
+    endfunction
+
+    // Re-applies size and anchor of a TEXT frame so its text fits on one line, keeping the
+    // text where the map placed it. The anchor offset is moved by (a - f) * growth, where
+    // a is where on the frame the anchor sits (0 left, .5 centre, 1 right) and f is the
+    // same for the text's own justification: left text keeps its left edge, centred text
+    // its centre, right text its right edge. forceApply = false skips the work when the width
+    // would not change (a map may call DzFrameSetText every tick).
+    function DzCompat_TextFit takes integer frame, boolean forceApply returns nothing
+        local framehandle f
+        local framehandle r
+        local real reqW
+        local real reqH
+        local real fontH
+        local real w
+        local real a = 0.
+        local real jf = 0.
+        local real x
+        local real y
+        local integer kind
+        local integer pt
+        local integer horz
+        local integer len
+        if not DZCOMPAT_TEXT_AUTOFIT then
+            return
+        endif
+        if not LoadBoolean(gDzCompatTextFit, frame, 0) then
+            return
+        endif
+        set kind = LoadInteger(gDzCompatTextFit, frame, 4)
+        if not LoadBoolean(gDzCompatTextFit, frame, 3) or kind == 0 or LoadBoolean(gDzCompatTextFit, frame, 11) then
+            return
+        endif
+        set f = DzCompat_GetFrame(frame)
+        if f == null then
+            return
+        endif
+        set reqW = LoadReal(gDzCompatTextFit, frame, 1)
+        set reqH = LoadReal(gDzCompatTextFit, frame, 2)
+        set fontH = LoadReal(gDzCompatTextFit, frame, 12)
+        if fontH <= 0. then
+            set fontH = DZCOMPAT_TEXT_DEFAULT_FONT_H
+        endif
+        set w = reqW
+        if reqH <= fontH * DZCOMPAT_TEXT_MAX_LINES_H then
+            set len = DzCompat_TextVisibleLen(BlzFrameGetText(f))
+            if len > 0 and I2R(len) * fontH * DZCOMPAT_TEXT_CHAR_W_RATIO > w then
+                set w = I2R(len) * fontH * DZCOMPAT_TEXT_CHAR_W_RATIO
+            endif
+        endif
+        if not forceApply and w == LoadReal(gDzCompatTextFit, frame, 15) then
+            return
+        endif
+        call SaveReal(gDzCompatTextFit, frame, 15, w)
+        call BlzFrameSetSize(f, w, reqH)
+        set pt = LoadInteger(gDzCompatTextFit, frame, 5)
+        set x = LoadReal(gDzCompatTextFit, frame, 8)
+        set y = LoadReal(gDzCompatTextFit, frame, 9)
+        if pt == 1 or pt == 4 or pt == 7 then
+            set a = 0.5
+        elseif pt == 2 or pt == 5 or pt == 8 then
+            set a = 1.
+        endif
+        set horz = LoadInteger(gDzCompatTextFit, frame, 13)
+        if horz == 4 then
+            set jf = 0.5
+        elseif horz == 5 then
+            set jf = 1.
+        endif
+        set x = x + (a - jf) * (w - reqW)
+        if kind == 1 then
+            call BlzFrameSetAbsPoint(f, ConvertFramePointType(pt), x, y)
+        else
+            set r = DzCompat_GetFrame(LoadInteger(gDzCompatTextFit, frame, 6))
+            if r != null then
+                call BlzFrameSetPoint(f, ConvertFramePointType(pt), r, ConvertFramePointType(LoadInteger(gDzCompatTextFit, frame, 7)), DzCompat_AnchorX(r, LoadInteger(gDzCompatTextFit, frame, 7), x), y)
+            endif
+        endif
+        set f = null
+        set r = null
     endfunction
 
     function DzCreateFrame takes string frame, integer parent, integer id returns integer
@@ -185,6 +552,7 @@
         local framehandle owner = DzCompat_GetOwnerFrame(parent)
         local framehandle f = null
         local string plainType = frameType
+        local integer fid
         if regName == null or regName == "" then
             set regName = "__FrameGen_" + I2S(GetRandomInt(1, 100000))
         endif
@@ -200,7 +568,11 @@
         if f == null and plainType != frameType then
             set f = BlzCreateFrameByType(frameType, regName, owner, "", id)
         endif
-        return DzCompat_RegisterFrameNamed(f, regName, id)
+        set fid = DzCompat_RegisterFrameNamed(f, regName, id)
+        if fid != 0 and StringCase(frameType, true) == "TEXT" then
+            call SaveBoolean(gDzCompatTextFit, fid, 0, true)
+        endif
+        return fid
     endfunction
 
     // [FIXED] leak: DzFrameSetScriptByCode (and the Block/Async variants that call
@@ -230,6 +602,7 @@
         endloop
         call FlushChildHashtable(gDzCompatFrameEvt, frame)
         call FlushChildHashtable(gDzCompatFocusTrack, frame)
+        call FlushChildHashtable(gDzCompatTextFit, frame)
         call BlzDestroyFrame(f)
         set gDzCompatFrame[frame] = null
         set trig = null
@@ -305,8 +678,16 @@ endfunction
 function DzFrameGetHeroBarButton takes integer buttonId returns integer
     local framehandle realBtn = BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, buttonId)
     
-    // Return a proxy frame that is a child of a STABLE parent.
-    local framehandle proxy = BlzCreateFrameByType("BACKDROP", "DzHeroProxy" + I2S(buttonId), DzCompat_GetStableParent(), "", 0)
+    // Return a proxy frame that is a child of a STABLE parent. With the edge fix that parent is
+    // the edge owner: a proxy under ConsoleUI was never laid out once it was anchored to a hero
+    // button, so every frame anchored to it disappeared (the debug markers, which are children
+    // of ConsoleUIBackdrop and anchored to the real buttons, were placed correctly).
+    local framehandle proxy
+    if DZCOMPAT_EDGE_SHIFT then
+        set proxy = BlzCreateFrameByType("BACKDROP", "DzHeroProxy" + I2S(buttonId), DzCompat_EdgeOwner(), "", 0)
+    else
+        set proxy = BlzCreateFrameByType("BACKDROP", "DzHeroProxy" + I2S(buttonId), DzCompat_GetStableParent(), "", 0)
+    endif
     
     // Make it invisible
     call BlzFrameSetAlpha(proxy, 0)
@@ -318,11 +699,23 @@ function DzFrameGetHeroBarButton takes integer buttonId returns integer
         call BlzFrameSetSize(proxy, 0.03, 0.03) // fallback size
     endif
     
-    // Position it using ABSOLUTE coordinates in the 4:3 UI space.
-    // The hero buttons are at the LEFT side of the screen.
-    // Coordinates: TOPLEFT (0.0, 0.55) is the typical hero bar position.
-    call BlzFrameSetAbsPoint(proxy, FRAMEPOINT_TOPLEFT, 0.0, 0.55 - (buttonId * 0.04))
-    
+    // Reforged moved the hero bar compared to classic, so follow the real button: the game
+    // anchors the hero column to the real screen edge. The proxy is only anchored to it, never
+    // made its child, so it survives the button being hidden. Without a real button, fall back
+    // to the left edge of the screen with the old y position (0.55 - buttonId * 0.04).
+    if realBtn != null and DZCOMPAT_EDGE_SHIFT then
+        // Hidden hero buttons (no hero in that slot) are laid out like visible ones: the test
+        // markers on buttons 1, 3 and 6 sat in one column 0.0513 apart, flush with the screen edge.
+        call BlzFrameSetPoint(proxy, FRAMEPOINT_TOPLEFT, realBtn, FRAMEPOINT_TOPLEFT, 0.0, 0.0)
+    else
+        call BlzFrameSetPoint(proxy, FRAMEPOINT_TOPLEFT, DzCompat_GetGameUI(), FRAMEPOINT_TOPLEFT, DzCompat_AnchorX(DzCompat_GetGameUI(), 0, 0.), -(0.05 + (buttonId * 0.04)))
+    endif
+    if DZCOMPAT_DEBUG_SCREEN and gDzCompatDbgLog < 14 then
+        set gDzCompatDbgLog = gDzCompatDbgLog + 1
+        call DzCompat_DbgSay("HeroBarButton(" + I2S(buttonId) + "): real button " + DzCompat_DbgB(realBtn != null) + ", real visible " + DzCompat_DbgB(realBtn != null and BlzFrameIsVisible(realBtn)) + ", real size " + DzCompat_DbgSize(realBtn) + ", follows real button " + DzCompat_DbgB(realBtn != null and DZCOMPAT_EDGE_SHIFT))
+        call DzCompat_DbgSay("   proxy " + I2S(buttonId) + " is anchored to the real hero button " + I2S(buttonId) + "; gray marker 0.07 to its right")
+        call BlzFrameSetPoint(DzCompat_MakeDebugStrip("DzCompatDbgProxy" + I2S(buttonId), DzCompat_EdgeOwner(), 8, 0.015, 0.038), FRAMEPOINT_TOPLEFT, proxy, FRAMEPOINT_TOPLEFT, 0.07, 0.)
+    endif
     return DzCompat_RegisterFrame(proxy)
 endfunction
 
@@ -408,7 +801,23 @@ endfunction
         if f == null or r == null or point < 0 or point > 8 or relativePoint < 0 or relativePoint > 8 then
             return
         endif
-        call BlzFrameSetPoint(f, ConvertFramePointType(point), r, ConvertFramePointType(relativePoint), x, y)
+        call BlzFrameSetPoint(f, ConvertFramePointType(point), r, ConvertFramePointType(relativePoint), DzCompat_AnchorX(r, relativePoint, x), y)
+        if DZCOMPAT_DEBUG_SCREEN and r == DzCompat_GetGameUI() and gDzCompatDbgLog < 10 then
+            set gDzCompatDbgLog = gDzCompatDbgLog + 1
+            call DzCompat_DbgSay("SetPoint #" + I2S(frame) + " '" + BlzFrameGetName(f) + "' point " + I2S(point) + " -> GameUI point " + I2S(relativePoint) + ", x " + R2S(x) + " -> " + R2S(DzCompat_AnchorX(r, relativePoint, x)) + ", y " + R2S(y) + ", visible " + DzCompat_DbgB(BlzFrameIsVisible(f)))
+        endif
+        if LoadBoolean(gDzCompatTextFit, frame, 0) then
+            if LoadInteger(gDzCompatTextFit, frame, 4) != 0 and LoadInteger(gDzCompatTextFit, frame, 5) != point then
+                call SaveBoolean(gDzCompatTextFit, frame, 11, true)
+            endif
+            call SaveInteger(gDzCompatTextFit, frame, 4, 2)
+            call SaveInteger(gDzCompatTextFit, frame, 5, point)
+            call SaveInteger(gDzCompatTextFit, frame, 6, relativeFrame)
+            call SaveInteger(gDzCompatTextFit, frame, 7, relativePoint)
+            call SaveReal(gDzCompatTextFit, frame, 8, x)
+            call SaveReal(gDzCompatTextFit, frame, 9, y)
+            call DzCompat_TextFit(frame, true)
+        endif
     endfunction
 
     function DzFrameSetAbsolutePoint takes integer frame, integer point, real x, real y returns nothing
@@ -417,6 +826,16 @@ endfunction
             return
         endif
         call BlzFrameSetAbsPoint(f, ConvertFramePointType(point), x, y)
+        if LoadBoolean(gDzCompatTextFit, frame, 0) then
+            if LoadInteger(gDzCompatTextFit, frame, 4) != 0 and LoadInteger(gDzCompatTextFit, frame, 5) != point then
+                call SaveBoolean(gDzCompatTextFit, frame, 11, true)
+            endif
+            call SaveInteger(gDzCompatTextFit, frame, 4, 1)
+            call SaveInteger(gDzCompatTextFit, frame, 5, point)
+            call SaveReal(gDzCompatTextFit, frame, 8, x)
+            call SaveReal(gDzCompatTextFit, frame, 9, y)
+            call DzCompat_TextFit(frame, true)
+        endif
     endfunction
 
     function DzFrameSetAllPoints takes integer frame, integer relativeFrame returns boolean
@@ -425,7 +844,15 @@ endfunction
         if f == null or r == null then
             return false
         endif
-        call BlzFrameSetAllPoints(f, r)
+        if DZCOMPAT_EDGE_SHIFT and r == DzCompat_GetGameUI() and DzCompat_ScreenMargin() > 0. then
+            // a full-screen Dz GameUI: stretch over the margins on both sides as well
+            call BlzFrameSetPoint(f, FRAMEPOINT_TOPLEFT, r, FRAMEPOINT_TOPLEFT, DzCompat_AnchorX(r, 0, 0.), 0.)
+            call BlzFrameSetPoint(f, FRAMEPOINT_BOTTOMRIGHT, r, FRAMEPOINT_BOTTOMRIGHT, DzCompat_AnchorX(r, 8, 0.), 0.)
+        else
+            call BlzFrameSetAllPoints(f, r)
+        endif
+        // size now comes from the other frame, so the auto-fit must leave this one alone
+        call SaveBoolean(gDzCompatTextFit, frame, 11, true)
         return true
     endfunction
 
@@ -433,6 +860,8 @@ endfunction
         local framehandle f = DzCompat_GetFrame(frame)
         if f != null then
             call BlzFrameClearAllPoints(f)
+            call SaveInteger(gDzCompatTextFit, frame, 4, 0)
+            call SaveBoolean(gDzCompatTextFit, frame, 11, false)
         endif
     endfunction
 
@@ -440,6 +869,12 @@ endfunction
         local framehandle f = DzCompat_GetFrame(frame)
         if f != null then
             call BlzFrameSetSize(f, w, h)
+            if LoadBoolean(gDzCompatTextFit, frame, 0) then
+                call SaveReal(gDzCompatTextFit, frame, 1, w)
+                call SaveReal(gDzCompatTextFit, frame, 2, h)
+                call SaveBoolean(gDzCompatTextFit, frame, 3, true)
+                call DzCompat_TextFit(frame, true)
+            endif
         endif
     endfunction
 
@@ -447,6 +882,9 @@ endfunction
         local framehandle f = DzCompat_GetFrame(frame)
         local framehandle p = DzCompat_GetFrame(parent)
         if f != null and p != null then
+            if p == DzCompat_GetGameUI() then
+                set p = DzCompat_EdgeOwner()
+            endif
             call BlzFrameSetParent(f, p)
         endif
     endfunction
@@ -621,6 +1059,7 @@ endfunction
             set text = ""
         endif
         call BlzFrameSetText(f, text)
+        call DzCompat_TextFit(frame, false)
     endfunction
 
     function DzFrameGetText takes integer frame returns string
@@ -694,6 +1133,10 @@ endfunction
             set horz = 4 // TEXT_JUSTIFY_CENTER
         endif
         call BlzFrameSetTextAlignment(f, ConvertTextAlignType(1), ConvertTextAlignType(horz)) // vertical always MIDDLE
+        if LoadBoolean(gDzCompatTextFit, frame, 0) then
+            call SaveInteger(gDzCompatTextFit, frame, 13, horz)
+            call DzCompat_TextFit(frame, true)
+        endif
     endfunction
 
     function DzFrameSetFont takes integer frame, string fileName, real height, integer flag returns nothing
@@ -705,6 +1148,10 @@ endfunction
             set fileName = ""
         endif
         call BlzFrameSetFont(f, fileName, height, flag)
+        if LoadBoolean(gDzCompatTextFit, frame, 0) then
+            call SaveReal(gDzCompatTextFit, frame, 12, height)
+            call DzCompat_TextFit(frame, true)
+        endif
     endfunction
 
     function DzFrameGetName takes integer frame returns string
