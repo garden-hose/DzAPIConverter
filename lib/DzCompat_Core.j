@@ -53,3 +53,13 @@ function UnitAlive takes unit id returns boolean
     endif
     return not IsUnitType(id, UNIT_TYPE_DEAD)
 endfunction
+
+// Safe timer destruction. Maps often DestroyTimer the same handle twice (timer callback
+// + cleanup path, or Flush + Destroy). A second DestroyTimer on an already-destroyed
+// handle can crash Reforged; pausing first and skipping null is the usual fix.
+function DzCompat_DestroyTimer takes timer t returns nothing
+    if t != null then
+        call PauseTimer(t)
+        call DestroyTimer(t)
+    endif
+endfunction

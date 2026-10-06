@@ -163,6 +163,18 @@ final class ForwardConverter {
                        " UnitAddAbility call site(s) to use " + AbilityAddConverter.WRAPPER);
         }
 
+        // DestroyTimer call sites -> DzCompat_DestroyTimer (null-check + pause before destroy).
+        // Independent of Dz/EX usage: every map that tears timers down benefits, and maps
+        // that never call DestroyTimer simply rewrite zero sites.
+        boolean timerDestroyRewritten = false;
+        if (settings.convertSafeTimerDestroy) {
+            TimerDestroyConverter.Result timerResult = TimerDestroyConverter.convert(jassScript);
+            jassScript = timerResult.lines;
+            timerDestroyRewritten = timerResult.rewritten > 0;
+            logger.log("[" + Timestamps.now() + "] Safe timer destroy: rewrote " + timerResult.rewritten +
+                       " DestroyTimer call site(s) to use " + TimerDestroyConverter.WRAPPER);
+        }
+
         // Collect native declarations that have real implementations
         List<Integer> nativeIndices = new ArrayList<>();
         List<String> nativeNames = new ArrayList<>();
@@ -210,6 +222,10 @@ final class ForwardConverter {
 
         if (abilityAddRewritten) {
             neededNames.add(AbilityAddConverter.WRAPPER);
+        }
+
+        if (timerDestroyRewritten) {
+            neededNames.add(TimerDestroyConverter.WRAPPER);
         }
 
         // EXExecuteScript is only converted when there is a table folder with table .ini

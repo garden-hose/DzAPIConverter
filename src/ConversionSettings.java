@@ -44,4 +44,9 @@ final class ConversionSettings {
      *  UnitAddAbility calls are routed through DzCompat_UnitAddAbility so new ability
      *  instances receive those values (YDWE writes object data; Reforged only the instance). */
     boolean convertAbilityAddData = true;
+
+    /** When true, DestroyTimer call sites are rewritten to DzCompat_DestroyTimer, which
+     *  null-checks and pauses before destroy. Prevents Reforged crashes from double-destroy
+     *  of the same timer handle (callback + cleanup paths). On by default. */
+    boolean convertSafeTimerDestroy = true;
 }
