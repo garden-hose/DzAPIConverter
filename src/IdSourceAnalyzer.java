@@ -28,6 +28,16 @@ import java.util.regex.Pattern;
  *     which cannot be traced)
  *   - a global integer variable or array -> everything assigned to it
  *
+ *
+ * YDWE "local variables" (GUI locals) live in one big hashtable, YDLOC, under the key
+ * {@code GetHandleId(GetTriggeringTrigger()) * ydl_localvar_step}. Every trigger has its
+ * own slot, so a load of such a local can only be fed by stores made by the SAME trigger
+ * (its Actions / Conditions / FuncNNN callbacks - the functions whose names share the
+ * prefix before the first Func<digit> / Actions / Conditions). The same child key (the
+ * local's name hash) is typically reused by dozens of triggers, which used to push the
+ * store count over MAX_FAN_OUT; scoping the stores to the load's own trigger keeps the
+ * trace precise. If that finds no store at all the unscoped set is used instead.
+ *
  * What it does NOT do, on purpose:
  *   - values it cannot see through (arithmetic, S2I, user functions, locals and
  *     parameters) are ignored, i.e. the analysis is optimistic about them;
@@ -58,19 +68,51 @@ final class IdSourceAnalyzer {
 
     private static final class Store {
         final String parentKey, childKey, value;
+        /** function the store is in (null when unknown) */
+        final String function;
 
-        Store(String parentKey, String childKey, String value) {
+        Store(String parentKey, String childKey, String value, String function) {
             this.parentKey = parentKey;
             this.childKey = childKey;
             this.value = value;
+            this.function = function;
         }
+    }
+
+    /** A value assigned to a global, with the function it is evaluated in. */
+    private static final class Assigned {
+        final String expr, function;
+
+        Assigned(String expr, String function) {
+            this.expr = expr;
+            this.function = function;
+        }
+    }
+
+    private static final Pattern FUNCTION_LINE = Pattern.compile("^(?:private\\s+|public\\s+)?function\\s+(\\w+)\\s+takes\\b");
+    private static final Pattern FAMILY_CUT = Pattern.compile("Func\\d|Actions|Conditions");
+
+    /** The trigger a YDWE-generated function belongs to: its name up to Func<digit> / Actions / Conditions. */
+    static String family(String function) {
+        Matcher m = FAMILY_CUT.matcher(function);
+        return m.find() ? function.substring(0, m.start()) : function;
+    }
+
+    private static boolean isYdLocalKey(String parentKey) {
+        return parentKey.contains("ydl_localvar_step");
+    }
+
+    private static String squash(String text) {
+        return text.replaceAll("\\s+", "");
     }
 
     private final List<String> script;
     /** hashtable variable -> every SaveInteger into it */
     private final Map<String, List<Store>> stores = new HashMap<>();
     /** global integer variable/array -> every value assigned to it (including its initialiser) */
-    private final Map<String, List<String>> globalValues = new HashMap<>();
+    private final Map<String, List<Assigned>> globalValues = new HashMap<>();
+    /** enclosing function of every script line (null outside functions) */
+    private final String[] functionOfLine;
     /** memo: hashtable variable -> reason it may be written to unseen (null = clean) */
     private final Map<String, String> escapeCache = new HashMap<>();
 
@@ -81,15 +123,20 @@ final class IdSourceAnalyzer {
 
     IdSourceAnalyzer(List<String> script) {
         this.script = script;
+        this.functionOfLine = new String[script.size()];
         index();
     }
 
     private void index() {
         boolean inGlobals = false;
         boolean globalsDone = false;
-        for (String raw : script) {
-            String line = raw.trim();
-            if (line.isEmpty() || line.startsWith("//")) continue;
+        String currentFunction = null;
+        for (int lineNo = 0; lineNo < script.size(); lineNo++) {
+            String line = script.get(lineNo).trim();
+            if (line.isEmpty() || line.startsWith("//")) {
+                functionOfLine[lineNo] = currentFunction;
+                continue;
+            }
 
             if (!globalsDone) {
                 if (!inGlobals) {
@@ -102,9 +149,19 @@ final class IdSourceAnalyzer {
                 }
                 Matcher m = INT_GLOBAL.matcher(JassExpr.code(line));
                 if (m.matches()) {
-                    List<String> values = globalValues.computeIfAbsent(m.group(1), k -> new ArrayList<>());
-                    if (m.group(2) != null) values.add(m.group(2).trim());
+                    List<Assigned> values = globalValues.computeIfAbsent(m.group(1), k -> new ArrayList<>());
+                    if (m.group(2) != null) values.add(new Assigned(m.group(2).trim(), null));
                 }
+                continue;
+            }
+
+            Matcher fm = FUNCTION_LINE.matcher(line);
+            if (fm.find()) {
+                currentFunction = fm.group(1);
+            }
+            functionOfLine[lineNo] = currentFunction;
+            if (line.startsWith("endfunction")) {
+                currentFunction = null;
                 continue;
             }
 
@@ -114,13 +171,15 @@ final class IdSourceAnalyzer {
                 List<String> args = JassExpr.splitTopLevel(save.group(1), ',');
                 if (args.size() == 4 && JassExpr.isIdentifier(args.get(0).trim())) {
                     stores.computeIfAbsent(args.get(0).trim(), k -> new ArrayList<>())
-                          .add(new Store(args.get(1).trim(), args.get(2).trim(), args.get(3).trim()));
+                          .add(new Store(args.get(1).trim(), args.get(2).trim(), args.get(3).trim(), currentFunction));
                 }
             } else if (code.startsWith("set")) {
                 Matcher m = SET_TARGET.matcher(code);
                 if (m.find() && globalValues.containsKey(m.group(1))) {
                     int eq = assignmentIndex(code, m.end(1));
-                    if (eq > 0) globalValues.get(m.group(1)).add(code.substring(eq + 1).trim());
+                    if (eq > 0) {
+                        globalValues.get(m.group(1)).add(new Assigned(code.substring(eq + 1).trim(), currentFunction));
+                    }
                 }
             }
         }
@@ -150,12 +209,21 @@ final class IdSourceAnalyzer {
 
     /** Object ids the integer expression can evaluate to (see the class comment for the limits). */
     Result resolve(String expression) {
+        return resolve(expression, -1);
+    }
+
+    /**
+     * Same, for an expression written on the given 0-based script line; the line tells which
+     * function (and so which YDWE trigger) its local-variable loads belong to.
+     */
+    Result resolve(String expression, int line) {
         Result result = new Result();
-        collect(expression, result, new HashSet<Object>());
+        String function = (line >= 0 && line < functionOfLine.length) ? functionOfLine[line] : null;
+        collect(expression, result, new HashSet<Object>(), function);
         return result;
     }
 
-    private void collect(String expression, Result out, Set<Object> visited) {
+    private void collect(String expression, Result out, Set<Object> visited, String function) {
         String expr = JassExpr.stripOuterParens(expression);
         if (expr.isEmpty()) return;
 
@@ -169,7 +237,7 @@ final class IdSourceAnalyzer {
         JassExpr.Call call = JassExpr.parseCall(expr);
         if (call != null) {
             if (call.name.equals("LoadInteger") && call.args.size() == 3) {
-                loadInteger(call.args, out, visited);
+                loadInteger(call.args, out, visited, function);
             } else if (RUNTIME_ID_NATIVES.contains(call.name)) {
                 markUnresolved(out, "reaches " + call.name + "(), an id only known at runtime");
             }
@@ -178,15 +246,15 @@ final class IdSourceAnalyzer {
 
         String variable = variableName(expr);
         if (variable != null) {
-            List<String> values = globalValues.get(variable);
+            List<Assigned> values = globalValues.get(variable);
             if (values != null && visited.add("var:" + variable)) {
-                for (String v : values) collect(v, out, visited);
+                for (Assigned v : values) collect(v.expr, out, visited, v.function);
             }
         }
         // anything else (arithmetic, locals, parameters): ignored
     }
 
-    private void loadInteger(List<String> args, Result out, Set<Object> visited) {
+    private void loadInteger(List<String> args, Result out, Set<Object> visited, String function) {
         String table = args.get(0).trim();
         if (!JassExpr.isIdentifier(table)) {
             markUnresolved(out, "reads a hashtable given by an expression (" + table + ")");
@@ -215,13 +283,26 @@ final class IdSourceAnalyzer {
         }
 
         List<Store> chosen = sameConstantKeys.isEmpty() ? compatible : sameConstantKeys;
+        if (function != null && isYdLocalKey(args.get(1))) {
+            // a YDWE GUI local: only this trigger's own stores of the very same slot can feed it
+            String parentText = squash(args.get(1));
+            String family = family(function);
+            List<Store> sameTrigger = new ArrayList<>();
+            for (Store s : chosen) {
+                if (s.function != null && squash(s.parentKey).equals(parentText)
+                        && family(s.function).equals(family)) {
+                    sameTrigger.add(s);
+                }
+            }
+            if (!sameTrigger.isEmpty()) chosen = sameTrigger;
+        }
         if (chosen.size() > MAX_FAN_OUT) {
             markUnresolved(out, "reads hashtable " + table + " with keys computed at runtime (" +
                                 chosen.size() + " possible stores)");
             return;
         }
         for (Store s : chosen) {
-            if (visited.add(s)) collect(s.value, out, visited);
+            if (visited.add(s)) collect(s.value, out, visited, s.function);
         }
     }
 

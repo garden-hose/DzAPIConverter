@@ -45,6 +45,12 @@ final class ConversionSettings {
      *  instances receive those values (YDWE writes object data; Reforged only the instance). */
     boolean convertAbilityAddData = true;
 
+    /** When true, and a map table folder is given, item.ini is scanned for objects that inherit a
+     *  stock item and set no Requires field; a copy with an empty Requires added is written to
+     *  item_patched.ini next to item.ini (Reforged's built-in requirements, such as 'oslo' needing
+     *  a Castle, otherwise apply). item.ini itself is never modified. Needs lib/ReforgedStockItemIds.txt. */
+    boolean patchItemRequirements = true;
+
     /** When true, DestroyTimer call sites are rewritten to DzCompat_DestroyTimer, which
      *  null-checks and pauses before destroy. Prevents Reforged crashes from double-destroy
      *  of the same timer handle (callback + cleanup paths). On by default. */

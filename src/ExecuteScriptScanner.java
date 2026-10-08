@@ -32,6 +32,11 @@ final class ExecuteScriptScanner {
         SLK_FIELD,
         /** Same idiom, but the field name is built at runtime (e.g. ".Cost" + I2S(level)). */
         SLK_DYNAMIC_FIELD,
+        /**
+         * A Lua string-library call ({@code string.find(...)}, {@code string.sub(...)}, ...).
+         * Needs no object data: DzCompat_Lua.j evaluates it at runtime.
+         */
+        LUA_STRING,
         /** Anything else - not supported. */
         OTHER
     }
@@ -67,6 +72,7 @@ final class ExecuteScriptScanner {
             switch (kind) {
                 case SLK_FIELD:         return table + "." + field;
                 case SLK_DYNAMIC_FIELD: return table + "." + field + "<runtime suffix>";
+                case LUA_STRING:        return "string." + field + "(...)";
                 default:
                     String t = template.replace('\u0001', '?');
                     return t.length() > 70 ? t.substring(0, 70) + "..." : t;
@@ -82,6 +88,15 @@ final class ExecuteScriptScanner {
             "jass\\.slk[)'\"\\s]*\\.\\s*(\\w+)\\s*\\[([^\\]]*)\\]\\s*\\.\\s*(\\w+)\\s*$");
     private static final Pattern SLK_READ_DYNAMIC_FIELD = Pattern.compile(
             "jass\\.slk[)'\"\\s]*\\.\\s*(\\w+)\\s*\\[([^\\]]*)\\]\\s*\\.\\s*(\\w*)" + HOLE);
+
+    // YDWE's Xwei object-data module, same data as jass.slk but called as a function:
+    //   (require'YDWEXweiObjectSlk').unit(<id>, 'Name')       groups: table, index, field
+    private static final Pattern XWEI_READ = Pattern.compile(
+            "YDWEXweiObjectSlk[)'\"\\s]*\\.\\s*(\\w+)\\s*\\(([^,()]*),\\s*['\"](\\w+)['\"]\\s*\\)\\s*$");
+    // string.<fn>( ... - the Lua string library (the argument may start inside parentheses)
+    private static final Pattern LUA_STRING_CALL = Pattern.compile("^[\\s(]*string\\.(\\w+)\\s*\\(");
+    static final Set<String> LUA_STRING_FUNCTIONS = Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
+            "pack", "unpack", "reverse", "find", "gsub", "match", "sub")));
 
     /** All EXExecuteScript(...) calls in the script, in file order. Comments are ignored. */
     static List<Call> scan(List<String> lines) {
@@ -138,7 +153,16 @@ final class ExecuteScriptScanner {
         }
         String t = template.toString();
 
-        Matcher m = SLK_READ.matcher(t);
+        Matcher m = LUA_STRING_CALL.matcher(t);
+        if (m.find() && LUA_STRING_FUNCTIONS.contains(m.group(1))) {
+            return new Call(lineIndex, t, Kind.LUA_STRING, null, m.group(1), null);
+        }
+        m = XWEI_READ.matcher(t);
+        if (m.find() && SLK_TABLES.contains(m.group(1))) {
+            return new Call(lineIndex, t, Kind.SLK_FIELD, m.group(1), m.group(3),
+                            idExpression(t, m.start(2), m.group(2), holes));
+        }
+        m = SLK_READ.matcher(t);
         if (m.find() && SLK_TABLES.contains(m.group(1))) {
             return new Call(lineIndex, t, Kind.SLK_FIELD, m.group(1), m.group(3),
                             idExpression(t, m.start(2), m.group(2), holes));

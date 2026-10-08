@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -50,11 +51,16 @@ final class SlkTableRegistry {
     private static final int MAX_LITERAL_BYTES = 300;
 
     /**
-     * If every row of the needed columns of a table adds up to no more than this many bytes
-     * of text, the whole table is baked; bigger tables are cut down to the object ids the
-     * script mentions as rawcode literals (an id read at runtime has to come from somewhere).
+     * Budget, in bytes of baked text (the values of the columns the script reads, not the size
+     * of the .ini files), for fields whose object ids cannot be traced and so need every object
+     * of the table. Fields that fit are baked in full - the only sound answer when an id comes
+     * from the game at runtime (GetUnitTypeId and friends). A field that does not fit is cut
+     * down to the objects whose rawcode appears in the script, which can miss objects.
+     * The budget is shared by all such fields (smallest columns are served first) and can be
+     * changed with -Ddzcompat.bakeLimitKb=N (default 2048).
      */
-    private static final long BAKE_WHOLE_TABLE_MAX_BYTES = 512 * 1024;
+    private static final long BAKE_WHOLE_TABLE_MAX_BYTES =
+            Math.max(0L, Long.getLong("dzcompat.bakeLimitKb", 2048L)) * 1024;
 
     /** Name of the generated entry point; ForwardConverter hooks it into main(). */
     static final String INIT_FUNCTION = "DzCompat_InitSlk";
@@ -115,8 +121,12 @@ final class SlkTableRegistry {
         List<String> unsupported = new ArrayList<>();
         IdSourceAnalyzer analyzer = null;
         int slkReads = 0;
+        int luaStringCalls = 0;
         for (ExecuteScriptScanner.Call c : calls) {
             switch (c.kind) {
+                case LUA_STRING:
+                    luaStringCalls++;
+                    break;
                 case SLK_FIELD:
                     slkReads++;
                     if (analyzer == null) analyzer = new IdSourceAnalyzer(jassScript);
@@ -133,7 +143,8 @@ final class SlkTableRegistry {
             }
         }
         log(logger, "EXExecuteScript: " + calls.size() + " call site(s), " + slkReads +
-                    " read jass.slk fields " + describeDemand(demand));
+                    " read jass.slk fields " + describeDemand(demand) + ", " + luaStringCalls +
+                    " Lua string call(s) evaluated at runtime");
         for (String d : dynamicFields) {
             log(logger, "WARNING: EXExecuteScript " + d + " - field name built at runtime, not supported (returns null)");
         }
@@ -154,6 +165,7 @@ final class SlkTableRegistry {
         // Read the needed columns of every needed table and decide, per (table, field), which
         // objects to keep: the traced ids, or - when the ids cannot be traced - a broader set.
         Map<String, TableData> tables = new LinkedHashMap<>();
+        long[] bakeBudget = { BAKE_WHOLE_TABLE_MAX_BYTES };
         Map<String, Set<String>> keepOnly = new LinkedHashMap<>();   // "table\0field" -> ids; absent = every object
         for (Map.Entry<String, Map<String, Demand>> te : demand.entrySet()) {
             String table = te.getKey();
@@ -176,28 +188,36 @@ final class SlkTableRegistry {
             }
 
             Set<String> traced = new LinkedHashSet<>();
-            Boolean bakeWholeTable = null;
+            List<String> broadFields = new ArrayList<>();
             for (Map.Entry<String, Demand> fe : te.getValue().entrySet()) {
                 String field = fe.getKey();
                 Demand d = fe.getValue();
-                String key = table + "\u0000" + field;
                 if (!d.broad) {
-                    keepOnly.put(key, d.ids);
+                    keepOnly.put(table + "\u0000" + field, d.ids);
                     traced.addAll(d.ids);
                     log(logger, table + "." + field + ": " + d.ids.size() + " object id(s) traced from the script " + preview(d.ids));
-                    continue;
+                } else {
+                    broadFields.add(field);
                 }
-                if (bakeWholeTable == null) {
-                    bakeWholeTable = data.textBytes() <= BAKE_WHOLE_TABLE_MAX_BYTES;
-                }
-                if (bakeWholeTable) {
+            }
+            // Smallest columns first, so the shared budget covers as many fields as possible.
+            final TableData tableData = data;
+            broadFields.sort(Comparator.comparingLong(tableData::fieldBytes));
+            for (String field : broadFields) {
+                Demand d = te.getValue().get(field);
+                String key = table + "\u0000" + field;
+                long bytes = data.fieldBytes(field);
+                if (bytes <= bakeBudget[0]) {
+                    bakeBudget[0] -= bytes;
                     log(logger, table + "." + field + ": ids could not be traced (" + d.reason + "); baking all " +
-                                data.rows.size() + " object(s)");
+                                data.rows.size() + " object(s), " + (bytes / 1024) + " KB");
                 } else {
                     if (candidateIds == null) candidateIds = collectRawcodes(jassScript);
                     keepOnly.put(key, candidateIds);
-                    log(logger, table + "." + field + ": ids could not be traced (" + d.reason + "); table too big to " +
-                                "bake in full, baking the objects whose rawcode appears in the script");
+                    log(logger, "WARNING: " + table + "." + field + ": ids could not be traced (" + d.reason + ") and the " +
+                                "column is " + (bytes / 1024) + " KB, over the remaining " + (bakeBudget[0] / 1024) +
+                                " KB bake budget; baking only the objects whose rawcode appears in the script - objects " +
+                                "whose id comes from the game at runtime may read null (raise it with -Ddzcompat.bakeLimitKb=N)");
                 }
             }
             List<String> notInTable = new ArrayList<>();
@@ -400,7 +420,7 @@ final class SlkTableRegistry {
                 reason = where + "the index is not written as I2S(...) or a literal";
                 return;
             }
-            IdSourceAnalyzer.Result r = analyzer.resolve(call.idExpression);
+            IdSourceAnalyzer.Result r = analyzer.resolve(call.idExpression, call.line);
             if (r.unresolved != null) {
                 broad = true;
                 reason = where + r.unresolved;
@@ -419,6 +439,16 @@ final class SlkTableRegistry {
         /** wanted fields that are per-level arrays in the ini (not supported). */
         final Set<String> arrayFields = new LinkedHashSet<>();
         int unsupportedValues;
+
+        /** UTF-8 size of one column over every row. */
+        long fieldBytes(String field) {
+            long total = 0;
+            for (Map<String, String> row : rows.values()) {
+                String v = row.get(field);
+                if (v != null) total += v.getBytes(StandardCharsets.UTF_8).length;
+            }
+            return total;
+        }
 
         long textBytes() {
             long total = 0;

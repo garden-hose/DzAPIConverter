@@ -248,14 +248,29 @@ final class ForwardConverter {
         boolean needsUnitModelTable = neededNames.contains("DzSetUnitModel") ||
                                        ModelPathRegistry.scriptUsesDzSetUnitModel(jassScript);
         Path slkTableDir = null;
-        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable || needsAbilityDataFieldRegistry || needsUnitModelTable) {
+        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable || needsAbilityDataFieldRegistry 
+				|| needsUnitModelTable || settings.patchItemRequirements) {
             slkTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
         }
         if (neededNames.contains("EXExecuteScript") && slkTableDir == null) {
-            neededNames.remove("EXExecuteScript");
-            realCount--;
-            logger.log("[" + Timestamps.now() + "] EXExecuteScript: skipped - no map table files to work from " +
-                       "(the native is stubbed instead)");
+            // The Lua string.* calls need no object data, so they still get the real
+            // implementation; only the jass.slk / Xwei object-data reads need the table folder.
+            boolean usesLuaStrings = false;
+            for (ExecuteScriptScanner.Call c : ExecuteScriptScanner.scan(jassScript)) {
+                if (c.kind == ExecuteScriptScanner.Kind.LUA_STRING) {
+                    usesLuaStrings = true;
+                    break;
+                }
+            }
+            if (usesLuaStrings) {
+                logger.log("[" + Timestamps.now() + "] EXExecuteScript: no map table files, so object-data reads " +
+                           "return null; Lua string.* calls are still converted");
+            } else {
+                neededNames.remove("EXExecuteScript");
+                realCount--;
+                logger.log("[" + Timestamps.now() + "] EXExecuteScript: skipped - no map table files to work from " +
+                           "(the native is stubbed instead)");
+            }
         }
         logger.log("[" + Timestamps.now() + "] Found " + realCount +
                    " native declarations with real Reforged-compatible implementations");
@@ -590,6 +605,27 @@ final class ForwardConverter {
         //    parentFixTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
         //}
         //AIs2ParentFixer.fix(parentFixTableDir, logger);
+
+        // Reforged: write item_patched.ini (item.ini + an empty Requires on stock-based items) so
+        // built-in requirements such as 'oslo' needing a Castle do not apply. Uses the Map table path;
+        // item.ini itself is never modified. Failures only log - the conversion already succeeded.
+        if (settings.patchItemRequirements) {
+            if (slkTableDir == null) {
+                logger.log("[" + Timestamps.now() + "] Item requirements: skipped (no map table path)");
+            } else {
+                try {
+                    java.util.Set<String> stockItemIds = ItemRequirementPatcher.loadStockIds(libDir);
+                    if (stockItemIds == null) {
+                        logger.log("[" + Timestamps.now() + "] WARNING: lib/" + ItemRequirementPatcher.STOCK_IDS_FILE_NAME +
+                                   " not found - item requirements not patched");
+                    } else {
+                        ItemRequirementPatcher.patch(slkTableDir, stockItemIds, logger);
+                    }
+                } catch (IOException e) {
+                    logger.log("[" + Timestamps.now() + "] WARNING: item requirements not patched: " + e.getMessage());
+                }
+            }
+        }
 
         if (!unknownNatives.isEmpty()) {
             // De-dupe while preserving order for a cleaner log

@@ -43,10 +43,10 @@
 //   0x60 / 0x61           As-target type / Type
 //
 // Only the indices this converter's target maps are known to actually use
-// are implemented below (decimal 18, 20, 21, 22, 32, 37, 81 = hex 0x12,
-// 0x14, 0x15, 0x16, 0x20, 0x25, 0x51). Add a case for any other index a map
-// turns out to need - unmapped indices fall through to a harmless 0 / no-op,
-// exactly the same silent failure they'd have had without this file, so
+// are implemented below (decimal 18, 19, 20, 21, 22, 32, 37, 81 = hex 0x12,
+// 0x13, 0x14, 0x15, 0x16, 0x20, 0x25, 0x51). Add a case for any other index a
+// map turns out to need - unmapped indices fall through to a harmless 0 /
+// no-op, exactly the same silent failure they'd have had without this file, so
 // adding this library is always strictly an improvement, never a regression.
 // ============================================================================
 
@@ -158,6 +158,7 @@
     // bonus on the next attack-bonus change). Summing 'Iatt' across the unit's current
     // abilities recovers the common case; a bonus applied by some other, non-field means
     // (e.g. a fully custom buff system) is still outside what this can see.
+    // Index 19 (0x13) exposes this value as a unit-state via DzCompat_ExtStateGetBonus19.
     function DzCompat_ExtStateGetAttackBonus takes unit whichUnit returns integer
         local integer i = 0
         local integer total = 0
@@ -171,21 +172,37 @@
         return total
     endfunction
 
+    // Effective index-19 value: local override if the map wrote one (Set of
+    // 0x13 stores tag 9085 and flags 9086), else the live 'Iatt' ability sum.
+    // Set never changes combat on its own - Reforged has no single field for
+    // green bonus - it only stores the value for Get read-back.
+    function DzCompat_ExtStateGetBonus19 takes unit whichUnit returns real
+        local integer id = GetHandleId(whichUnit)
+        if HaveSavedBoolean(gDzCompatUnitStateTable, id, 9086) then
+            return LoadReal(gDzCompatUnitStateTable, id, 9085)
+        endif
+        return I2R(DzCompat_ExtStateGetAttackBonus(whichUnit))
+    endfunction
+
     function DzCompat_GetExtUnitState takes unit whichUnit, integer idx returns real
         if idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
             return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0))
+        elseif idx == 19 then
+            // [APPROX on Get / LOCAL on Set] 0x13 Attack 1 green damage bonus
+            return DzCompat_ExtStateGetBonus19(whichUnit)
         elseif idx == 20 then
             // [APPROX] 0x14 Attack 1 min damage - derived as base + dice
-            // (one pip per die), matching the object editor formula.
-            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0) + BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0))
+            // (one pip per die), matching the object editor formula, plus the
+            // effective green bonus (see DzCompat_ExtStateGetBonus19).
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0) + BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0)) + DzCompat_ExtStateGetBonus19(whichUnit)
         elseif idx == 21 then
             // [APPROX] 0x15 Attack 1 max damage - WC3 has no direct "max damage"
             // field; the object editor derives it as base + dice * sides, so
-            // that's what's reproduced here, plus the current attack-bonus ability
-            // total (see DzCompat_ExtStateGetAttackBonus) so an active green bonus
-            // is reflected instead of silently dropped.
-            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0) + (BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0) * BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0)) + DzCompat_ExtStateGetAttackBonus(whichUnit))
+            // that's what's reproduced here, plus the effective green bonus
+            // (see DzCompat_ExtStateGetBonus19) so an active attack bonus is
+            // reflected instead of silently dropped.
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0) + (BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0) * BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0))) + DzCompat_ExtStateGetBonus19(whichUnit)
         elseif idx == 22 then
             // [REAL] 0x16 Attack 1 range (weapon 1). Matches the UnitState.cpp
             // table entry "range" - not dice*sides damage span.
@@ -217,25 +234,29 @@
     function DzCompat_SetExtUnitState takes unit whichUnit, integer idx, real value returns nothing
         local integer dice
         local integer sides
+        local integer id
         if idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
             call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value))
+        elseif idx == 19 then
+            // [LOCAL] 0x13 Attack 1 green damage bonus - no Reforged field to
+            // write; store for Get read-back only (see DzCompat_ExtStateGetBonus19).
+            set id = GetHandleId(whichUnit)
+            call SaveReal(gDzCompatUnitStateTable, id, 9085, value)
+            call SaveBoolean(gDzCompatUnitStateTable, id, 9086, true)
         elseif idx == 20 then
             // [APPROX] 0x14 Attack 1 min damage - write by adjusting base so
-            // base + dice equals the requested minimum.
+            // base + dice + effective green bonus equals the requested minimum.
             set dice = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0)
-            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value) - dice)
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value - DzCompat_ExtStateGetBonus19(whichUnit)) - dice)
         elseif idx == 21 then
             // [APPROX] 0x15 Attack 1 max damage - write by adjusting base so
-            // base + dice * sides + the current attack-bonus ability total (see
-            // DzCompat_ExtStateGetAttackBonus) equals the requested maximum. [FIXED]
-            // Subtracting the bonus here is what keeps it from being lost: without
-            // this, an active green bonus got folded into base on the very next
-            // read-modify-write of max damage, and stayed baked in - wrong - even
-            // after the bonus itself expired.
+            // base + dice * sides + effective green bonus equals the requested
+            // maximum. Using GetBonus19 (not the raw 'Iatt' sum) keeps a local
+            // 0x13 override consistent with min/max read-modify-write.
             set dice = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0)
             set sides = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0)
-            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value) - (dice * sides) - DzCompat_ExtStateGetAttackBonus(whichUnit))
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value - DzCompat_ExtStateGetBonus19(whichUnit)) - (dice * sides))
         elseif idx == 22 then
             // [REAL] 0x16 Attack 1 range - see DzCompat_ExtStateSetAttackRange
             call DzCompat_ExtStateSetAttackRange(whichUnit, value)

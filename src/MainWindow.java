@@ -45,6 +45,8 @@ final class MainWindow {
     private final JCheckBox removeIndentationCheckbox = new JCheckBox("Remove indentation", false);
     /** When checked, Convert stubs out the archive save system: nothing is saved, no file is written. */
     private final JCheckBox removeLocalSaveCheckbox = new JCheckBox("Remove local save", false);
+    /** When checked, Convert also writes item_patched.ini (item.ini + empty Requires on stock-based items) next to item.ini. */
+    private final JCheckBox patchItemRequirementsCheckbox = new JCheckBox("Patch item requirements", true);
     private final JTextArea consoleArea = new JTextArea();
     private final JFileChooser fileChooser = new JFileChooser();
 
@@ -193,11 +195,17 @@ final class MainWindow {
         removeLocalSaveCheckbox.setToolTipText(
             "Convert only: stubs out the natives of the archive save system (SaveServerValue, GetServerValue, " +
             "Store*/GetStored*, ...), so nothing is saved and no file is written to your system.");
+        patchItemRequirementsCheckbox.setToolTipText(
+            "Convert only, needs the Map table path: writes item_patched.ini next to item.ini, with an empty " +
+            "Requires field added to every item that inherits a stock item and sets none. Stops Reforged's " +
+            "built-in requirements (e.g. the Orb of Slow needing a Castle). item.ini itself is not changed; " +
+            "re-import the patched data into the map.");
         buttonPanel.add(convertButton);
         buttonPanel.add(reverseButton);
         buttonPanel.add(clearUnusedNativesCheckbox);
         buttonPanel.add(removeIndentationCheckbox);
         buttonPanel.add(removeLocalSaveCheckbox);
+        buttonPanel.add(patchItemRequirementsCheckbox);
         buttonPanel.setBorder(new EmptyBorder(10, 0, 6, 0));
 
         JPanel north = new JPanel(new BorderLayout());
@@ -321,6 +329,7 @@ final class MainWindow {
         settings.clearUnusedNatives = clearUnusedNativesCheckbox.isSelected();
         settings.removeIndentation = removeIndentationCheckbox.isSelected();
         settings.removeLocalSave = removeLocalSaveCheckbox.isSelected();
+        settings.patchItemRequirements = patchItemRequirementsCheckbox.isSelected();
 
         // Save settings after reading UI values
         saveSettings();
@@ -334,6 +343,7 @@ final class MainWindow {
         log("Clear unused natives = " + settings.clearUnusedNatives);
         log("Remove indentation = " + settings.removeIndentation);
         log("Remove local save = " + settings.removeLocalSave);
+        log("Patch item requirements = " + settings.patchItemRequirements);
         log("Overrides = " + settings.unlockStubs);
 
         // Run conversion off the EDT
@@ -449,6 +459,8 @@ final class MainWindow {
             props.getProperty("removeIndentation", "false")));
         removeLocalSaveCheckbox.setSelected(Boolean.parseBoolean(
             props.getProperty("removeLocalSave", "false")));
+        patchItemRequirementsCheckbox.setSelected(Boolean.parseBoolean(
+            props.getProperty("patchItemRequirements", "true")));
 
         // Apply the Unlock gate last, so it locks/unlocks the fields only
         // after their saved values have been restored.
@@ -466,6 +478,7 @@ final class MainWindow {
         props.setProperty("clearUnusedNatives", Boolean.toString(clearUnusedNativesCheckbox.isSelected()));
         props.setProperty("removeIndentation", Boolean.toString(removeIndentationCheckbox.isSelected()));
         props.setProperty("removeLocalSave", Boolean.toString(removeLocalSaveCheckbox.isSelected()));
+        props.setProperty("patchItemRequirements", Boolean.toString(patchItemRequirementsCheckbox.isSelected()));
         props.setProperty("stubHasMallItem", (hasMallItemCombo.getSelectedItem() != null) ? hasMallItemCombo.getSelectedItem().toString() : "true");
         Object levelVal = getMapLevelSpinner.getValue();
         props.setProperty("stubGetMapLevel", (levelVal instanceof Number) ? levelVal.toString() : "99");
