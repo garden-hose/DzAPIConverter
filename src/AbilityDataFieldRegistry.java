@@ -45,6 +45,8 @@ final class AbilityDataFieldRegistry {
         PARENT_IDS.put("AIDB", 8);
         PARENT_IDS.put("AILZ", 9);
         PARENT_IDS.put("AIMZ", 10);
+        PARENT_IDS.put("AESH", 11);
+        PARENT_IDS.put("ACSS", 11);
     }
 
     static boolean scriptMayNeedRegistry(Set<String> neededNames) {

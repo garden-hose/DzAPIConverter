@@ -320,7 +320,7 @@
     //
     // parentId:
     //   1  Aamk   2  ANcl   3  AHtb   4  AHbz   5  AEme
-    //   6  ACbf   7  AIaz   8  AIdb   9  AIlz  10  AImz
+    //   6  ACbf   7  AIaz   8  AIdb   9  AIlz  10  AImz  11  AEsh/ACss
 
     function DzCompat_MarkAbilityParent takes integer abilcode, integer parentId returns nothing
         call SaveInteger(gYDWEEXAbilityParent, abilcode, 0, parentId)
@@ -419,6 +419,19 @@
             if data_type == 108 then
                 return 'Imz1'
             endif
+        elseif parentId == 11 then
+            // AEsh / ACss (Shadow Strike): A=Esh1 decaying damage, B..D=Esh2..Esh4, E=Esh5 initial damage
+            if data_type == 108 then
+                return 'Esh1'
+            elseif data_type == 109 then
+                return 'Esh2'
+            elseif data_type == 110 then
+                return 'Esh3'
+            elseif data_type == 111 then
+                return 'Esh4'
+            elseif data_type == 112 then
+                return 'Esh5'
+            endif
         endif
         return 0
     endfunction
@@ -459,6 +472,8 @@
         elseif parentId == 9 then
             return 1
         elseif parentId == 10 then
+            return 1
+        elseif parentId == 11 then
             return 1
         endif
         return 0
