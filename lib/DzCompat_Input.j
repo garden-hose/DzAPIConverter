@@ -753,11 +753,42 @@ endglobals
     // Which key was pressed, returned as a Dz/Windows VK code.
     // Uses the full OSKEY -> VK table comparisons
     // against the integer key codes maps register with actually match.
+    // Dz mouse buttons are the Windows VK codes: 1 left, 2 right, 4 MIDDLE (the real client's button table,
+    // kkapi_local_plugin.dll 0x1007de34, dzclient_api.dll 0x1000c1e0). Reforged's mousebuttontype numbers
+    // them 1 left, 2 middle, 3 right, so a Dz 2 must not go through ConvertMouseButtonType. null = no button.
+    function DzCompat_DzMouseButton takes integer btn returns mousebuttontype
+        if btn == 1 then
+            return MOUSE_BUTTON_TYPE_LEFT
+        elseif btn == 2 then
+            return MOUSE_BUTTON_TYPE_RIGHT
+        elseif btn == 4 then
+            return MOUSE_BUTTON_TYPE_MIDDLE
+        endif
+        return null
+    endfunction
+
+    // Inside a mouse button event the real client returns the button (1, 2 or 4) here, not a key
+    // (dzclient_api.dll 0x1000c140, kkapi_local_plugin.dll 0x1007d020).
     function DzGetTriggerKey takes nothing returns integer
+        local eventid ev = GetTriggerEventId()
+        if ev == EVENT_PLAYER_MOUSE_DOWN or ev == EVENT_PLAYER_MOUSE_UP then
+            if BlzGetTriggerPlayerMouseButton() == MOUSE_BUTTON_TYPE_LEFT then
+                return 1
+            elseif BlzGetTriggerPlayerMouseButton() == MOUSE_BUTTON_TYPE_RIGHT then
+                return 2
+            elseif BlzGetTriggerPlayerMouseButton() == MOUSE_BUTTON_TYPE_MIDDLE then
+                return 4
+            endif
+        endif
         return DzCompat_OsKeyToVk(BlzGetTriggerPlayerKey())
     endfunction
 
+    // The real client reads GetAsyncKeyState(vk) & 0x8000: the local physical state, and the VK codes
+    // 1, 2 and 4 are the mouse buttons (kkapi_local_plugin.dll 0x1007d160, dzclient_api.dll 0x1000c7d8).
 	function DzIsKeyDown takes integer iKey returns boolean
+        if iKey == 1 or iKey == 2 or iKey == 4 then
+            return BlzIsMouseButtonPressed(DzCompat_DzMouseButton(iKey))
+        endif
         return BlzIsKeyPressed(ConvertOsKeyType(iKey))
     endfunction
 
@@ -777,11 +808,13 @@ endglobals
         local boolean curDown
         local boolean btnMatch
         local boolean statusMatch
+        // Down or up comes from the event itself, as in the real client (the window message). It used to
+        // be BlzIsMouseButtonPressed, which reads the LOCAL client's mouse in an event every client runs.
+        set curDown = GetTriggerEventId() == EVENT_PLAYER_MOUSE_DOWN
         loop
             exitwhen i >= count
-            set checkBtn = ConvertMouseButtonType(LoadInteger(gDzInputMouseReg, tid, i * 3))
-            set btnMatch = (curBtn == checkBtn)
-            set curDown = BlzIsMouseButtonPressed(checkBtn)
+            set checkBtn = DzCompat_DzMouseButton(LoadInteger(gDzInputMouseReg, tid, i * 3))
+            set btnMatch = checkBtn != null and curBtn == checkBtn
             // same 0=up / 1=down assumption as the key dispatcher
             set statusMatch = (curDown == (LoadInteger(gDzInputMouseReg, tid, i * 3 + 1) != 0))
             if btnMatch and statusMatch then
@@ -811,7 +844,7 @@ endglobals
         call TriggerAddAction(trig, function DzCompat_MouseEventDispatch)
     endfunction
 
-    // [ARCHITECTED] btn: assumed to match Blizzard MOUSE_BUTTON_TYPE_* (1/2/3).
+    // [ARCHITECTED] btn: the Dz button code, 1 left, 2 right, 4 middle (see DzCompat_DzMouseButton).
     // status, sync: same assumptions as DzTriggerRegisterKeyEvent.
     // NOTE: common.j warns that mouse events crash if registered during map
     // init — delay until after gameplay starts.
@@ -836,7 +869,8 @@ endglobals
     // install a button filter condition (left vs non-left), so one call is enough.
     //
     // btn: Dz mouse button codes — 1 (or 0x1) = left, anything else =
-    //      treated as right for the condition filter (mapped 0x2 -> right).
+    //      treated as right for the condition filter (mapped 0x2 -> right),
+    //      except 4, the middle button.
     // status: 1 = down (bj_MOUSEEVENTTYPE_DOWN), 0 = up (bj_MOUSEEVENTTYPE_UP).
     // sync: signature compatibility only; events are registered for the local
     //       player. Prefer a dedicated trigger per button.
@@ -854,6 +888,15 @@ endglobals
         return BlzGetTriggerPlayerMouseButton() == MOUSE_BUTTON_TYPE_RIGHT
     endfunction
 
+    // Dz button 4 is the middle button (the VK code; see DzCompat_DzMouseButton). It used to fall
+    // through to the right-button filter.
+    function DzCompat_MouseMMBCondition takes nothing returns boolean
+        if GetLocalPlayer() != GetTriggerPlayer() then
+            return false
+        endif
+        return BlzGetTriggerPlayerMouseButton() == MOUSE_BUTTON_TYPE_MIDDLE
+    endfunction
+
     function DzTriggerRegisterMouseEventByCode takes trigger trig, integer btn, integer status, boolean sync, code funcHandle returns nothing
         local integer eventType
         if trig == null then
@@ -865,9 +908,11 @@ endglobals
             set eventType = bj_MOUSEEVENTTYPE_UP
         endif
         call TriggerRegisterPlayerMouseEventBJ(trig, GetLocalPlayer(), eventType)
-        // btn 0x1 / 1 -> left; otherwise right. Middle is not distinguished.
+        // btn 0x1 / 1 -> left; 4 -> middle; otherwise right.
         if btn == 1 or btn == 0x1 then
             call TriggerAddCondition(trig, Condition(function DzCompat_MouseLMBCondition))
+        elseif btn == 4 then
+            call TriggerAddCondition(trig, Condition(function DzCompat_MouseMMBCondition))
         else
             call TriggerAddCondition(trig, Condition(function DzCompat_MouseRMBCondition))
         endif
@@ -1376,6 +1421,8 @@ endglobals
         call TriggerRegisterPlayerMouseEventBJ(whichTrigger, GetLocalPlayer(), eventType)
         if btn == 1 or btn == 0x1 then
             call TriggerAddCondition(whichTrigger, Condition(function DzCompat_MouseLMBCondition))
+        elseif btn == 4 then
+            call TriggerAddCondition(whichTrigger, Condition(function DzCompat_MouseMMBCondition))
         else
             call TriggerAddCondition(whichTrigger, Condition(function DzCompat_MouseRMBCondition))
         endif
