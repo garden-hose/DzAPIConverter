@@ -661,9 +661,18 @@
         return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_COMMAND_BUTTON, row * 4 + column))
     endfunction
 
-    // The upper button bar (menu, allies, log, quests): the origin frame SYSTEM_BUTTON.
+    // The upper button bar: the origin frame SYSTEM_BUTTON, but the two numberings differ. The real client
+    // reads the bar's fields +0x138, +0x130, +0x134, +0x160 for ids 0..3 (kkapi_local_plugin.dll 0x100770b0,
+    // dzclient_api.dll 0x10018e00), which the bar's constructor in Game.dll (1.27a and 1.28.5) names
+    // 0 Quests, 1 Menu, 2 Allies, 3 Log. Reforged's SYSTEM_BUTTON is 0 Menu, 1 Allies, 2 Log, 3 Quests
+    // (proven in game: a map that asked for 1 to put the game menu behind its own button got Allies).
     function DzFrameGetUpperButtonBarButton takes integer buttonId returns integer
-        return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_SYSTEM_BUTTON, buttonId))
+        if buttonId == 0 then
+            return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_SYSTEM_BUTTON, 3))
+        elseif buttonId >= 1 and buttonId <= 3 then
+            return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_SYSTEM_BUTTON, buttonId - 1))
+        endif
+        return 0
     endfunction
 
 function DzCompat_GetStableParent takes nothing returns framehandle
