@@ -7,8 +7,9 @@
 // the triggers registered for the original prefix. Short values are sent directly, untouched.
 //
 // LIMITATIONS
-//   - A sliced value reaches its triggers through TriggerExecute, so the trigger's CONDITIONS are
-//     evaluated first and its actions run only if they return true.
+//   - A value (sliced or not) reaches its trigger through TriggerEvaluate + TriggerExecute, as in the
+//     real client, so the trigger's CONDITIONS are evaluated first and its actions run only if they
+//     return true.
 //   - Slices of one player arrive in order; if one is lost, the whole value is dropped.
 // ============================================================================
 
@@ -22,6 +23,8 @@ globals
     // original prefix hash -> [-1] count, [i] trigger i, [-2 - i] its prefix
     hashtable gDzSyncSlices = null
     trigger   gDzSyncSliceTrig = null
+    // receives the values sent directly, for every registered prefix
+    trigger   gDzSyncDirectTrig = null
     // set while a reassembled value is handed to the registered triggers
     boolean   gDzSyncDispatching = false
     string    gDzSyncDispatchPrefix = ""
@@ -137,8 +140,20 @@ endglobals
         set sender = null
     endfunction
 
+    // Receives a value sent directly (not sliced) and hands it to the trigger registered for its prefix.
+    function DzCompat_Sync_OnDirect takes nothing returns nothing
+        local string data = BlzGetTriggerSyncData()
+        if data == null then
+            set data = ""
+        endif
+        call DzCompat_Sync_Dispatch(GetTriggerPlayer(), BlzGetTriggerSyncPrefix(), data)
+    endfunction
+
     // Remembers that trig wants the values synced under prefix; the first call also sets up the
-    // slice receiver.
+    // slice receiver, and the first call for each prefix makes the direct receiver listen to it.
+    // ONE trigger per prefix, as in the real client: registering the same prefix again REPLACES the
+    // trigger (kkapi_local_plugin.dll 0x1007e7d0 and dzclient_api.dll 0x1000e270 keep a map keyed by the
+    // prefix). The prefix is compared exactly, case included (dzclient_api.dll 0x1000ded0).
     function DzCompat_Sync_Register takes trigger trig, string prefix returns nothing
         local integer key = StringHash(prefix)
         local integer count
@@ -146,17 +161,34 @@ endglobals
         if gDzSyncSlices == null then
             set gDzSyncSlices = InitHashtable()
             set gDzSyncSliceTrig = CreateTrigger()
+            set gDzSyncDirectTrig = CreateTrigger()
             loop
                 exitwhen i >= bj_MAX_PLAYER_SLOTS
                 call BlzTriggerRegisterPlayerSyncEvent(gDzSyncSliceTrig, Player(i), DZSYNC_SLICE_PREFIX, false)
                 set i = i + 1
             endloop
             call TriggerAddAction(gDzSyncSliceTrig, function DzCompat_Sync_OnSlice)
+            call TriggerAddAction(gDzSyncDirectTrig, function DzCompat_Sync_OnDirect)
         endif
         set count = LoadInteger(gDzSyncSlices, key, -1)
+        set i = 0
+        loop
+            exitwhen i >= count
+            if LoadStr(gDzSyncSlices, key, -2 - i) == prefix then
+                call SaveTriggerHandle(gDzSyncSlices, key, i, trig)
+                return
+            endif
+            set i = i + 1
+        endloop
         call SaveTriggerHandle(gDzSyncSlices, key, count, trig)
         call SaveStr(gDzSyncSlices, key, -2 - count, prefix)
         call SaveInteger(gDzSyncSlices, key, -1, count + 1)
+        set i = 0
+        loop
+            exitwhen i >= bj_MAX_PLAYER_SLOTS
+            call BlzTriggerRegisterPlayerSyncEvent(gDzSyncDirectTrig, Player(i), prefix, false)
+            set i = i + 1
+        endloop
     endfunction
 
     // Sends data as slices.
@@ -184,12 +216,15 @@ endglobals
     endfunction
 
     // ---- sync data ------------------------------------------------
+    // As in the real client: a null prefix or null data sends nothing ("" is a valid value and is
+    // sent), and the prefix travels cut to 31 bytes (strncpy_s into 32 bytes; kkapi_local_plugin.dll
+    // 0x1007eef0, dz_w3_plugin.dll 0x10030af0). The M16 dzclient_api.dll cut it to 9 bytes.
     function DzSyncData takes string prefix, string data returns nothing
-        if prefix == null then
+        if prefix == null or data == null then
             return
         endif
-        if data == null then
-            set data = ""
+        if StringLength(prefix) > 31 then
+            set prefix = SubString(prefix, 0, 31)
         endif
         if StringLength(data) > DZSYNC_DIRECT_MAX then
             call DzCompat_Sync_SendSliced(prefix, data)
@@ -207,18 +242,15 @@ endglobals
         call DzSyncData(prefix, data)
     endfunction
 
-    // Blizzard docs say fromServer should always be false. Register for every
-    // player slot so "any player sends, everyone receives" works.
+    // Blizzard docs say fromServer should always be false. Every player slot is listened to (in
+    // DzCompat_Sync_Register) so "any player sends, everyone receives" works, and the value reaches the
+    // ONE trigger registered for the prefix. A null, empty or longer than 32 bytes prefix is refused, as
+    // in the real client (kkapi_local_plugin.dll 0x1007e7d0). server is ignored (more permissive: the
+    // real client fires a server=true registration only for a packet flagged by the platform).
     function DzTriggerRegisterSyncData takes trigger trig, string prefix, boolean server returns nothing
-        local integer i = 0
-        if trig == null or prefix == null then
+        if trig == null or prefix == null or prefix == "" or StringLength(prefix) > 32 then
             return
         endif
-        loop
-            exitwhen i == bj_MAX_PLAYER_SLOTS
-            call BlzTriggerRegisterPlayerSyncEvent(trig, Player(i), prefix, false)
-            set i = i + 1
-        endloop
         call DzCompat_Sync_Register(trig, prefix)
     endfunction
 
