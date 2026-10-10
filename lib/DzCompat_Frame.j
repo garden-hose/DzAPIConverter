@@ -1253,16 +1253,9 @@ endfunction
         endif
     endfunction
 
-    // ---- [ASSUMPTION] frame event registration ---------------------------------
-    // Dz's eventId integers are assumed to reuse Reforged's own FRAMEEVENT_
-    // numbering (CONTROL_CLICK=1, MOUSE_ENTER=2, MOUSE_LEAVE=3, MOUSE_UP=4,
-    // MOUSE_DOWN=5, MOUSE_WHEEL=6, CHECKBOX_CHECKED=7, CHECKBOX_UNCHECKED=8,
-    // EDITBOX_TEXT_CHANGED=9, POPUPMENU_ITEM_CHANGED=10, MOUSE_DOUBLECLICK=11,
-    // SPRITE_ANIM_UPDATE=12, SLIDER_VALUE_CHANGED=13, DIALOG_CANCEL=14,
-    // DIALOG_ACCEPT=15, EDITBOX_ENTER=16), since Dz's frame system sits on
-    // top of the same underlying engine. [UNVERIFIED] - if clicks fire
-    // as "mouse enter" or nothing fires at all, this numbering is wrong for
-    // your Dz build.
+    // ---- frame event registration -------------------------------------------
+    // Dz's eventId integers mostly reuse Reforged's FRAMEEVENT_ numbering; the exceptions,
+    // read from the real client, are in DzCompat_ConvertFrameEvent below.
     //
     // "sync" isn't reproducible as a separate mode - it's not a choice: a frame click's
     // trigger condition/action already runs on every client for every registrant (see
@@ -1271,16 +1264,29 @@ endfunction
     // frame's local enabled/visible state). Every variant below (sync, async, block)
     // behaves identically as a result.
 
-    // [APPROX] Dz/Bz frame-event id quirk adopted from maxou:
-    // event ids above 10 are stored one higher than ConvertFrameEventType
-    // expects, so subtract 1 before converting. Ids 0..10 pass through.
-    // If a specific event never fires after conversion, this is the first
-    // place to re-check against your map's Dz build.
+    // Dz frame-event ids, from the real client's translation table (kkapi_local_plugin.dll 0x10074e80,
+    // dzclient_api.dll 0x10017e60, dz_w3_plugin.dll 0x10025420). The ids it produces are 1, 2, 3, 4, 6, 7,
+    // 8, 9, 10, 11, 12, 14 and (KK 0.6 only) 15:
+    //   1-4, 6-9 = Reforged 1-4, 6-9 (click, enter, leave, mouse up, wheel, checked, unchecked, text changed)
+    //   10 = CControlReleaseEvent (0x40090065), not the popup menu: [APPROX] MOUSE_UP (4)
+    //   11 = CMenuSelectionChangedEvent = POPUPMENU_ITEM_CHANGED (10)
+    //   12 = double click = MOUSE_DOUBLECLICK (11)
+    //   14 = CSliderValueChangeEvent = SLIDER_VALUE_CHANGED (13)
+    //   15 = the edit box family (0x400b0064, kkapi_local_plugin.dll only): [UNVERIFIED] EDITBOX_ENTER (16)
+    // 5, 13, 16 and 17 are never produced, so a script registered on them never ran in the original game:
+    // null here, and DzCompat_RegisterFrameEvents registers nothing for them (it used to fire them as
+    // MOUSE_DOWN, SPRITE_ANIM_UPDATE, DIALOG_ACCEPT and EDITBOX_ENTER).
     function DzCompat_ConvertFrameEvent takes integer eventId returns frameeventtype
-        if eventId > 10 then
+        if eventId == 10 then
+            return FRAMEEVENT_MOUSE_UP
+        elseif eventId == 11 or eventId == 12 or eventId == 14 then
             return ConvertFrameEventType(eventId - 1)
+        elseif eventId == 15 then
+            return FRAMEEVENT_EDITBOX_ENTER
+        elseif (eventId >= 1 and eventId <= 4) or (eventId >= 6 and eventId <= 9) then
+            return ConvertFrameEventType(eventId)
         endif
-        return ConvertFrameEventType(eventId)
+        return null
     endfunction
 
     // Trigger condition for click registrations: passes the first click event of a frame
@@ -1407,7 +1413,9 @@ endfunction
     // frame's type and template. MOUSE_ENTER/MOUSE_LEAVE (hover) go through the deferred
     // path above instead of registering immediately.
     function DzCompat_RegisterFrameEvents takes trigger trig, framehandle f, integer eventId returns nothing
-        if DzCompat_IsClickEvent(eventId) then
+        if DzCompat_ConvertFrameEvent(eventId) == null then
+            return
+        elseif DzCompat_IsClickEvent(eventId) then
             call BlzTriggerRegisterFrameEvent(trig, f, ConvertFrameEventType(1))
             call BlzTriggerRegisterFrameEvent(trig, f, ConvertFrameEventType(4))
         elseif eventId == 2 or eventId == 3 then
@@ -1456,24 +1464,45 @@ endfunction
     endfunction
 
     // ---- string-name variants ---------------------------------------------
-    // JASS cannot resolve "call the function named by this string" the way
-    // Dz's engine could - you must register each function once (anywhere in
-    // your init code, before it's referenced) via:
+    // A function can be registered once (anywhere in your init code, before
+    // it's referenced) via:
     //   call DzCompat_RegisterFuncName("MyHandler", function MyHandler)
     // After that, DzFrameSetScript("MyHandler") resolves to the same
-    // registered code and behaves like the ByCode variant.
+    // registered code and behaves like the ByCode variant. A name that was
+    // not registered is run by name (ExecuteFunc), see DzCompat_ResolveFuncByName.
     function DzCompat_RegisterFuncName takes string name, code func returns nothing
         local trigger trig = CreateTrigger()
         call TriggerAddAction(trig, func)
         call SaveTriggerHandle(gDzCompatFuncTriggers, StringHash(name), 0, trig)
     endfunction
 
+    // Action of the trigger DzCompat_ResolveFuncByName makes for a name nobody registered.
+    function DzCompat_RunNamedFunc takes nothing returns nothing
+        local string name = LoadStr(gDzCompatFuncTriggers, GetHandleId(GetTriggeringTrigger()), 1)
+        if name != null and name != "" then
+            call ExecuteFunc(name)
+        endif
+    endfunction
+
+    // A name passed to DzCompat_RegisterFuncName uses that registration. Any other name is run the way the
+    // real client runs it, by NAME (dzclient_api.dll 0x1000cbb0 calls the function by name; the synced frame
+    // event does ExecuteFunc(name), 0x10017c70): a shared trigger per name whose action is ExecuteFunc.
+    // Before, an unregistered name only printed a debug message and the frame did nothing - and maps build
+    // many of these names at run time ("tianfutisdj" + I2S(i)), which no list made in advance can hold.
+    // The name must be a function of the script, as it had to be in the original game.
     function DzCompat_ResolveFuncByName takes string name returns trigger
-        if not HaveSavedHandle(gDzCompatFuncTriggers, StringHash(name), 0) then
-            call BJDebugMsg("DzCompat: no function registered for name \"" + name + "\" - call DzCompat_RegisterFuncName first")
+        local trigger trig
+        if name == null or name == "" then
             return null
         endif
-        return LoadTriggerHandle(gDzCompatFuncTriggers, StringHash(name), 0)
+        if HaveSavedHandle(gDzCompatFuncTriggers, StringHash(name), 0) then
+            return LoadTriggerHandle(gDzCompatFuncTriggers, StringHash(name), 0)
+        endif
+        set trig = CreateTrigger()
+        call TriggerAddAction(trig, function DzCompat_RunNamedFunc)
+        call SaveStr(gDzCompatFuncTriggers, GetHandleId(trig), 1, name)
+        call SaveTriggerHandle(gDzCompatFuncTriggers, StringHash(name), 0, trig)
+        return trig
     endfunction
 
     function DzFrameSetScript takes integer frame, integer eventId, string func, boolean sync returns nothing
