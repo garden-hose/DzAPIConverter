@@ -69,7 +69,7 @@ final class ConverterConstants {
         "DzSetUnitAttackTargetCount", "DzGetUnitAttackTargetCount",
         "DzSetHeroPrimaryAttributeType", "DzGetHeroPrimaryAttributeType",
         "DzSetHeroPrimaryAttribute", "DzGetHeroPrimaryAttribute",
-        "DzSetHeroPrimaryAttributePlus", "DzGetHeroPrimaryAttributePlus",
+        "DzSetHeroPrimaryAttributePlus", "DzGetHeroPrimaryAttributePlus", "DzGetUnitNeededXP",
         "DzSetUnitAbilityCastTime", "DzGetUnitAbilityCastTime",
         "DzSetUnitAbilityOrderId", "DzGetUnitAbilityOrderId",
         "DzItemSetVertexColor", "DzItemGetVertexColor", "DzItemSetAlpha", "DzItemSetSize", "DzItemGetSize",
