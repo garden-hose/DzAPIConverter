@@ -63,10 +63,10 @@ globals
     integer gDzCompatMouseMoveDeferCount = 0
 		
 
-    // DzFrameSetUpdateCallback (string form): one shared 30 Hz timer runs every registered function name.
+    // DzFrameSetUpdateCallback*: one 30 Hz timer runs the ONE current callback, a name or the trigger's action.
     timer         gDzInputUpdateTimer = null
-    integer       gDzInputUpdateCount = 0
-    string array  gDzInputUpdateNames
+    string        gDzInputUpdateName = ""
+    trigger       gDzInputUpdateTrig = null
 endglobals
 
     // ========================================================================
@@ -1295,42 +1295,46 @@ endglobals
         endif
     endfunction
 
-    // [APPROX] DzFrameSetUpdateCallbackByCode — callback on a repeating 1/30s timer
-    function DzFrameSetUpdateCallbackByCode takes code funcHandle returns nothing
-        call TimerStart(CreateTimer(), 1.0 / 30.0, true, funcHandle)
-    endfunction
-
-    // Runs every function registered through DzFrameSetUpdateCallback. ExecuteFunc is what turns the stored
-    // names back into calls, since a name cannot be resolved to code any other way in plain JASS.
+    // The real client keeps ONE update callback: setting a new one (by name or by code) replaces the old
+    // one, and a null or empty one clears it (kkapi_local_plugin.dll 0x10078b50 / 0x10078bb0 and
+    // dzclient_api.dll 0x10018f80 / 0x10019000: one global string; ByCode turns the code into its name).
+    // It used to start one more timer per call, so a map that set it again ran both callbacks.
+    // [APPROX] The original calls it once per frame drawn, on the local client only; here it is a 30 Hz
+    // timer on every client.
     function DzCompat_UpdateCallbackTick takes nothing returns nothing
-        local integer i = 0
-        loop
-            exitwhen i >= gDzInputUpdateCount
-            call ExecuteFunc(gDzInputUpdateNames[i])
-            set i = i + 1
-        endloop
+        if gDzInputUpdateName != "" then
+            call ExecuteFunc(gDzInputUpdateName)
+        elseif gDzInputUpdateTrig != null then
+            call TriggerExecute(gDzInputUpdateTrig)
+        endif
     endfunction
 
-    // [APPROX] Same 30 Hz timer as DzFrameSetUpdateCallbackByCode, shared by all names; a name registered
-    // twice runs once per tick. A callback that is run by name cannot stop itself or be unregistered.
-    function DzFrameSetUpdateCallback takes string funcName returns nothing
-        local integer i = 0
-        if funcName == null or funcName == "" then
-            return
-        endif
-        loop
-            exitwhen i >= gDzInputUpdateCount
-            if gDzInputUpdateNames[i] == funcName then
-                return
-            endif
-            set i = i + 1
-        endloop
+    function DzCompat_UpdateCallbackEnsure takes nothing returns nothing
         if gDzInputUpdateTimer == null then
             set gDzInputUpdateTimer = CreateTimer()
             call TimerStart(gDzInputUpdateTimer, 1.0 / 30.0, true, function DzCompat_UpdateCallbackTick)
         endif
-        set gDzInputUpdateNames[gDzInputUpdateCount] = funcName
-        set gDzInputUpdateCount = gDzInputUpdateCount + 1
+        if gDzInputUpdateTrig == null then
+            set gDzInputUpdateTrig = CreateTrigger()
+        endif
+    endfunction
+
+    function DzFrameSetUpdateCallbackByCode takes code funcHandle returns nothing
+        call DzCompat_UpdateCallbackEnsure()
+        set gDzInputUpdateName = ""
+        call TriggerClearActions(gDzInputUpdateTrig)
+        if funcHandle != null then
+            call TriggerAddAction(gDzInputUpdateTrig, funcHandle)
+        endif
+    endfunction
+
+    function DzFrameSetUpdateCallback takes string funcName returns nothing
+        call DzCompat_UpdateCallbackEnsure()
+        call TriggerClearActions(gDzInputUpdateTrig)
+        if funcName == null then
+            set funcName = ""
+        endif
+        set gDzInputUpdateName = funcName
     endfunction
 
     // ========================================================================
