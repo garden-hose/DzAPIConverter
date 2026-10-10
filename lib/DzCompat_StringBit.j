@@ -349,8 +349,6 @@
         return SubString(s, 0, whichPosition) + whichString + SubString(s, whichPosition, StringLength(s))
     endfunction
 
-    endfunction
-
     // Non-overlapping count of whichString inside s. Empty needle returns 0.
     function DzStringCount takes string s, string whichString returns integer
         local integer step = StringLength(whichString)

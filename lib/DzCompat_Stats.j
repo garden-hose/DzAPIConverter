@@ -26,6 +26,13 @@
         hashtable gDzCompatUnitStateTable = InitHashtable()  // unit -> property map
         hashtable gDzCompatItemStateTable = InitHashtable()  // item -> property map
         hashtable gDzCompatTextTagStateTable = InitHashtable() // texttag -> property map
+        // DzGetUnitNeededXP: the hero XP table of the gameplay constants (NeedHeroXP, NeedHeroXPFormulaA/B/C).
+        // These are the game's defaults (Units\MiscGame.txt); a map that changes its table in the Gameplay
+        // Constants needs the same values here.
+        constant integer DZCOMPAT_HERO_XP_FIRST = 200
+        constant real DZCOMPAT_HERO_XP_A = 1.
+        constant real DZCOMPAT_HERO_XP_B = 100.
+        constant real DZCOMPAT_HERO_XP_C = 0.
     endglobals
 
     function DzCompat_AbilKey takes integer abilId, integer tag returns integer
@@ -323,6 +330,30 @@
 
     function DzGetHeroPrimaryAttributePlus takes unit whichUnit, integer attribute returns real
         return LoadReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 32 + attribute)
+    endfunction
+
+    // The total XP a hero needs to reach level `level` + 1. The real client calls the game's own
+    // CUnit::GetNeededXP (dz_w3_plugin.dll 0x10032950; also in kkapi_local_plugin.dll), which reads the hero
+    // XP table of the gameplay constants: total(2) = NeedHeroXP, total(n) = A * total(n - 1) + B * n + C
+    // (200, 500, 900, 1400... with the defaults). 0 for a level below 1 or a unit that is not a hero. A KK map
+    // divides its XP bar by NeededXP(level) - NeededXP(level - 1); the neutral stub (0) made that a division
+    // by zero. [APPROX] The table is DZCOMPAT_HERO_XP_* (the game defaults), not read from the map.
+    function DzGetUnitNeededXP takes unit whichUnit, integer level returns integer
+        local integer n = 2
+        local real total = I2R(DZCOMPAT_HERO_XP_FIRST)
+        if whichUnit == null or level < 1 or not IsUnitType(whichUnit, UNIT_TYPE_HERO) then
+            return 0
+        endif
+        if DZCOMPAT_HERO_XP_A == 1. then
+            // closed form, for maps with thousands of levels: B * (3 + 4 + ... + (level + 1)) + C * (level - 1)
+            return R2I(total + DZCOMPAT_HERO_XP_B * (I2R(level + 1) * I2R(level + 2) / 2. - 3.) + DZCOMPAT_HERO_XP_C * I2R(level - 1))
+        endif
+        loop
+            exitwhen n > level
+            set n = n + 1
+            set total = DZCOMPAT_HERO_XP_A * total + DZCOMPAT_HERO_XP_B * I2R(n) + DZCOMPAT_HERO_XP_C
+        endloop
+        return R2I(total)
     endfunction
 
     // ========================================================================

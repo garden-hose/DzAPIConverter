@@ -69,6 +69,8 @@
         //   12 font height (0 = default)   13 horizontal justify (0 = default, left)
         //   15 width last applied
         hashtable gDzCompatTextFit = InitHashtable()
+        // DzFrameSetTextAlignment: Dz frame id -> 0 vertical, 1 horizontal (ConvertTextAlignType indices)
+        hashtable gDzCompatTextAlign = InitHashtable()
         // Set to false to turn the auto-fit off.
         constant boolean DZCOMPAT_TEXT_AUTOFIT = true
         // Estimated width of one character, as a fraction of the font height. Measured
@@ -659,9 +661,18 @@
         return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_COMMAND_BUTTON, row * 4 + column))
     endfunction
 
-    // The upper button bar (menu, allies, log, quests): the origin frame SYSTEM_BUTTON.
+    // The upper button bar: the origin frame SYSTEM_BUTTON, but the two numberings differ. The real client
+    // reads the bar's fields +0x138, +0x130, +0x134, +0x160 for ids 0..3 (kkapi_local_plugin.dll 0x100770b0,
+    // dzclient_api.dll 0x10018e00), which the bar's constructor in Game.dll (1.27a and 1.28.5) names
+    // 0 Quests, 1 Menu, 2 Allies, 3 Log. Reforged's SYSTEM_BUTTON is 0 Menu, 1 Allies, 2 Log, 3 Quests
+    // (proven in game: a map that asked for 1 to put the game menu behind its own button got Allies).
     function DzFrameGetUpperButtonBarButton takes integer buttonId returns integer
-        return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_SYSTEM_BUTTON, buttonId))
+        if buttonId == 0 then
+            return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_SYSTEM_BUTTON, 3))
+        elseif buttonId >= 1 and buttonId <= 3 then
+            return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_SYSTEM_BUTTON, buttonId - 1))
+        endif
+        return 0
     endfunction
 
 function DzCompat_GetStableParent takes nothing returns framehandle
@@ -1046,7 +1057,12 @@ endfunction
         call BlzFrameSetSpriteAnimate(f, animId, flags)
     endfunction
 
-    function DzGetColor takes integer r, integer g, integer b, integer a returns integer
+    // The FIRST argument is the alpha: the real client builds (a1 << 24) | (a2 << 16) | (a3 << 8) | a4,
+    // i.e. ARGB (kkapi_local_plugin.dll 0x10079030, dzclient_api.dll 0x10018b40, dz_w3_plugin.dll
+    // 0x10026680). The KKWE GUI action reads "Alph, R, G, B", KK maps call DzGetColor(255, r, g, b) and M16
+    // maps declare the native as (a, r, g, b); the r, g, b, a names some headers use are misleading.
+    // With alpha taken from the 4th argument, DzGetColor(255, 255, 255, 0) (opaque yellow) came out invisible.
+    function DzGetColor takes integer a, integer r, integer g, integer b returns integer
         return BlzConvertColor(a, r, g, b)
     endfunction
 
@@ -1103,36 +1119,45 @@ endfunction
         return BlzFrameGetTextSizeLimit(f)
     endfunction
 
-    // The previous version treated align as ConvertTextAlignType's own two index
-    // sets (0-2 vertical, 3-5 horizontal) - a reasonable-looking guess, but wrong: a real
-    // converted map's own align values include 0, 6, 7 and 50, all outside that 0-5
-    // range, so most calls were silently dropped by the old bounds check. A comparison
-    // tool that ships a working DzFrameSetTextAlignment treats 0 and 100 as LEFT/RIGHT
-    // with vertical always MIDDLE - i.e. align is a 0-100 horizontal position, not a
-    // vertical/horizontal selector - which is also consistent with the same real map's
-    // own 0/50 pairs (used to flip a tab label between left-aligned and centered to show
-    // which tab is selected). Bucketing 0-100 into thirds additionally covers 6 and 7
-    // (both round down to LEFT, which fits their real use on left-justified tooltip
-    // text) without needing an exact 0/50/100 match.
-    //
-    // A map's own DzFrameSetTextAlignment calls all pass align=2, which is also
-    // consistent with either scheme (LEFT here; BOTTOM there), so it doesn't
-    // help decide. Pending a data point that actually
-    // discriminates between the two.
+    // align is a set of BIT FLAGS in the real client: vertical 1 top, 2 middle, 4 bottom;
+    // horizontal 8 left, 16 center, 32 right. The first bit found on each axis wins (1 > 2 > 4,
+    // 8 > 16 > 32) and an axis with no bit keeps what the frame already had (kkapi_local_plugin.dll
+    // 0x100788e0, dzclient_api.dll 0x1001afd0, dz_w3_plugin.dll 0x10029110: the same code in all three).
+    // The M16 JN library builds the same bits (JNFrameSetTextAlignment: TOP 1, MIDDLE 2, BOTTOM 4 +
+    // LEFT 8, CENTER 16, RIGHT 32). This is the data point the previous 0-100 reading was waiting for:
+    // 50 = middle + center, 6 = middle (horizontal kept), 7 = top, and 0 changes nothing, so a label set
+    // to 50 and then to 0 stays centered in the original game too.
+    // Reforged sets both axes in one call, so the last value of each axis is kept per frame in
+    // gDzCompatTextAlign ([APPROX]: an axis the map never set starts as middle / center, the frame's own
+    // template justification is not readable).
     function DzFrameSetTextAlignment takes integer frame, integer align returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
-        local integer horz
-        if f == null or align < 0 then
+        local integer vert = 1 // TEXT_JUSTIFY_MIDDLE
+        local integer horz = 4 // TEXT_JUSTIFY_CENTER
+        if f == null or BlzBitAnd(align, 63) == 0 then
             return
         endif
-        if align <= 33 then
-            set horz = 3 // TEXT_JUSTIFY_LEFT
-        elseif align >= 67 then
-            set horz = 5 // TEXT_JUSTIFY_RIGHT
-        else
-            set horz = 4 // TEXT_JUSTIFY_CENTER
+        if HaveSavedInteger(gDzCompatTextAlign, frame, 0) then
+            set vert = LoadInteger(gDzCompatTextAlign, frame, 0)
+            set horz = LoadInteger(gDzCompatTextAlign, frame, 1)
         endif
-        call BlzFrameSetTextAlignment(f, ConvertTextAlignType(1), ConvertTextAlignType(horz)) // vertical always MIDDLE
+        if BlzBitAnd(align, 1) != 0 then
+            set vert = 0 // TEXT_JUSTIFY_TOP
+        elseif BlzBitAnd(align, 2) != 0 then
+            set vert = 1 // TEXT_JUSTIFY_MIDDLE
+        elseif BlzBitAnd(align, 4) != 0 then
+            set vert = 2 // TEXT_JUSTIFY_BOTTOM
+        endif
+        if BlzBitAnd(align, 8) != 0 then
+            set horz = 3 // TEXT_JUSTIFY_LEFT
+        elseif BlzBitAnd(align, 16) != 0 then
+            set horz = 4 // TEXT_JUSTIFY_CENTER
+        elseif BlzBitAnd(align, 32) != 0 then
+            set horz = 5 // TEXT_JUSTIFY_RIGHT
+        endif
+        call SaveInteger(gDzCompatTextAlign, frame, 0, vert)
+        call SaveInteger(gDzCompatTextAlign, frame, 1, horz)
+        call BlzFrameSetTextAlignment(f, ConvertTextAlignType(vert), ConvertTextAlignType(horz))
         if LoadBoolean(gDzCompatTextFit, frame, 0) then
             call SaveInteger(gDzCompatTextFit, frame, 13, horz)
             call DzCompat_TextFit(frame, true)
@@ -1237,16 +1262,9 @@ endfunction
         endif
     endfunction
 
-    // ---- [ASSUMPTION] frame event registration ---------------------------------
-    // Dz's eventId integers are assumed to reuse Reforged's own FRAMEEVENT_
-    // numbering (CONTROL_CLICK=1, MOUSE_ENTER=2, MOUSE_LEAVE=3, MOUSE_UP=4,
-    // MOUSE_DOWN=5, MOUSE_WHEEL=6, CHECKBOX_CHECKED=7, CHECKBOX_UNCHECKED=8,
-    // EDITBOX_TEXT_CHANGED=9, POPUPMENU_ITEM_CHANGED=10, MOUSE_DOUBLECLICK=11,
-    // SPRITE_ANIM_UPDATE=12, SLIDER_VALUE_CHANGED=13, DIALOG_CANCEL=14,
-    // DIALOG_ACCEPT=15, EDITBOX_ENTER=16), since Dz's frame system sits on
-    // top of the same underlying engine. [UNVERIFIED] - if clicks fire
-    // as "mouse enter" or nothing fires at all, this numbering is wrong for
-    // your Dz build.
+    // ---- frame event registration -------------------------------------------
+    // Dz's eventId integers mostly reuse Reforged's FRAMEEVENT_ numbering; the exceptions,
+    // read from the real client, are in DzCompat_ConvertFrameEvent below.
     //
     // "sync" isn't reproducible as a separate mode - it's not a choice: a frame click's
     // trigger condition/action already runs on every client for every registrant (see
@@ -1255,16 +1273,29 @@ endfunction
     // frame's local enabled/visible state). Every variant below (sync, async, block)
     // behaves identically as a result.
 
-    // [APPROX] Dz/Bz frame-event id quirk adopted from maxou:
-    // event ids above 10 are stored one higher than ConvertFrameEventType
-    // expects, so subtract 1 before converting. Ids 0..10 pass through.
-    // If a specific event never fires after conversion, this is the first
-    // place to re-check against your map's Dz build.
+    // Dz frame-event ids, from the real client's translation table (kkapi_local_plugin.dll 0x10074e80,
+    // dzclient_api.dll 0x10017e60, dz_w3_plugin.dll 0x10025420). The ids it produces are 1, 2, 3, 4, 6, 7,
+    // 8, 9, 10, 11, 12, 14 and (KK 0.6 only) 15:
+    //   1-4, 6-9 = Reforged 1-4, 6-9 (click, enter, leave, mouse up, wheel, checked, unchecked, text changed)
+    //   10 = CControlReleaseEvent (0x40090065), not the popup menu: [APPROX] MOUSE_UP (4)
+    //   11 = CMenuSelectionChangedEvent = POPUPMENU_ITEM_CHANGED (10)
+    //   12 = double click = MOUSE_DOUBLECLICK (11)
+    //   14 = CSliderValueChangeEvent = SLIDER_VALUE_CHANGED (13)
+    //   15 = the edit box family (0x400b0064, kkapi_local_plugin.dll only): [UNVERIFIED] EDITBOX_ENTER (16)
+    // 5, 13, 16 and 17 are never produced, so a script registered on them never ran in the original game:
+    // null here, and DzCompat_RegisterFrameEvents registers nothing for them (it used to fire them as
+    // MOUSE_DOWN, SPRITE_ANIM_UPDATE, DIALOG_ACCEPT and EDITBOX_ENTER).
     function DzCompat_ConvertFrameEvent takes integer eventId returns frameeventtype
-        if eventId > 10 then
+        if eventId == 10 then
+            return FRAMEEVENT_MOUSE_UP
+        elseif eventId == 11 or eventId == 12 or eventId == 14 then
             return ConvertFrameEventType(eventId - 1)
+        elseif eventId == 15 then
+            return FRAMEEVENT_EDITBOX_ENTER
+        elseif (eventId >= 1 and eventId <= 4) or (eventId >= 6 and eventId <= 9) then
+            return ConvertFrameEventType(eventId)
         endif
-        return ConvertFrameEventType(eventId)
+        return null
     endfunction
 
     // Trigger condition for click registrations: passes the first click event of a frame
@@ -1391,7 +1422,9 @@ endfunction
     // frame's type and template. MOUSE_ENTER/MOUSE_LEAVE (hover) go through the deferred
     // path above instead of registering immediately.
     function DzCompat_RegisterFrameEvents takes trigger trig, framehandle f, integer eventId returns nothing
-        if DzCompat_IsClickEvent(eventId) then
+        if DzCompat_ConvertFrameEvent(eventId) == null then
+            return
+        elseif DzCompat_IsClickEvent(eventId) then
             call BlzTriggerRegisterFrameEvent(trig, f, ConvertFrameEventType(1))
             call BlzTriggerRegisterFrameEvent(trig, f, ConvertFrameEventType(4))
         elseif eventId == 2 or eventId == 3 then
@@ -1440,24 +1473,45 @@ endfunction
     endfunction
 
     // ---- string-name variants ---------------------------------------------
-    // JASS cannot resolve "call the function named by this string" the way
-    // Dz's engine could - you must register each function once (anywhere in
-    // your init code, before it's referenced) via:
+    // A function can be registered once (anywhere in your init code, before
+    // it's referenced) via:
     //   call DzCompat_RegisterFuncName("MyHandler", function MyHandler)
     // After that, DzFrameSetScript("MyHandler") resolves to the same
-    // registered code and behaves like the ByCode variant.
+    // registered code and behaves like the ByCode variant. A name that was
+    // not registered is run by name (ExecuteFunc), see DzCompat_ResolveFuncByName.
     function DzCompat_RegisterFuncName takes string name, code func returns nothing
         local trigger trig = CreateTrigger()
         call TriggerAddAction(trig, func)
         call SaveTriggerHandle(gDzCompatFuncTriggers, StringHash(name), 0, trig)
     endfunction
 
+    // Action of the trigger DzCompat_ResolveFuncByName makes for a name nobody registered.
+    function DzCompat_RunNamedFunc takes nothing returns nothing
+        local string name = LoadStr(gDzCompatFuncTriggers, GetHandleId(GetTriggeringTrigger()), 1)
+        if name != null and name != "" then
+            call ExecuteFunc(name)
+        endif
+    endfunction
+
+    // A name passed to DzCompat_RegisterFuncName uses that registration. Any other name is run the way the
+    // real client runs it, by NAME (dzclient_api.dll 0x1000cbb0 calls the function by name; the synced frame
+    // event does ExecuteFunc(name), 0x10017c70): a shared trigger per name whose action is ExecuteFunc.
+    // Before, an unregistered name only printed a debug message and the frame did nothing - and maps build
+    // many of these names at run time ("tianfutisdj" + I2S(i)), which no list made in advance can hold.
+    // The name must be a function of the script, as it had to be in the original game.
     function DzCompat_ResolveFuncByName takes string name returns trigger
-        if not HaveSavedHandle(gDzCompatFuncTriggers, StringHash(name), 0) then
-            call BJDebugMsg("DzCompat: no function registered for name \"" + name + "\" - call DzCompat_RegisterFuncName first")
+        local trigger trig
+        if name == null or name == "" then
             return null
         endif
-        return LoadTriggerHandle(gDzCompatFuncTriggers, StringHash(name), 0)
+        if HaveSavedHandle(gDzCompatFuncTriggers, StringHash(name), 0) then
+            return LoadTriggerHandle(gDzCompatFuncTriggers, StringHash(name), 0)
+        endif
+        set trig = CreateTrigger()
+        call TriggerAddAction(trig, function DzCompat_RunNamedFunc)
+        call SaveStr(gDzCompatFuncTriggers, GetHandleId(trig), 1, name)
+        call SaveTriggerHandle(gDzCompatFuncTriggers, StringHash(name), 0, trig)
+        return trig
     endfunction
 
     function DzFrameSetScript takes integer frame, integer eventId, string func, boolean sync returns nothing
