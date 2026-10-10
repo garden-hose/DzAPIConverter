@@ -44,7 +44,7 @@ final class ConverterConstants {
         "DzGetMouseTerrainX", "DzGetMouseTerrainY", "DzGetMouseTerrainZ", 
         "DzUnitChangeAlpha", "DzUnitDisableAttack", "DzUnitSilence", "DzUnitSetCanSelect", "DzUnitSetTargetable",
         "DzUnitSetMoveType",
-        "DzGetItemAbility", "DzSetUnitName", "DzGetUnitCollisionSize", "DzGetUnitZ", "DzKillUnit",
+        "DzGetSelectedLeaderUnit", "DzGetItemAbility", "DzSetUnitName", "DzGetUnitCollisionSize", "DzGetUnitZ", "DzKillUnit",
         "DzSetMousePos", "DzSetUnitPosition", "DzSetUnitXY", "DzGetLocale",
         "DzSetUnitMissileSpeed", "DzSetUnitMissileArc", "DzSetUnitMissileHoming", "DzSetUnitMissileModel",
         "DzSetUnitProperName", "DzWidgetSetMinimapIcon",

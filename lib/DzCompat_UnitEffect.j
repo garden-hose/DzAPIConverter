@@ -11,6 +11,8 @@ globals
     hashtable gDzCompatMouseTrack = InitHashtable()
     boolean   gDzCompatMouseTrackReady = false
     constant integer SILENCE_ABILITY_ID = 'ACsi'
+    // DzGetSelectedLeaderUnit: one group made at map init on every client (see the function)
+    group     gDzCompatSelectGroup = CreateGroup()
 endglobals
 
     function DzCompat_OnMouseMoveTrack takes nothing returns nothing
@@ -680,9 +682,17 @@ endglobals
     endfunction
 
     // [APPROX] "Leader" of the local selection = first unit in the selection
-    // group (same order GroupEnumUnitsSelected yields).
+    // group (same order GroupEnumUnitsSelected yields). Maps call it in local code (it reads the local
+    // selection), so it must not create a handle: a group made and destroyed per call allocates a handle id on
+    // one client only and desyncs later handle ids. It uses one group made at map init instead. Proven in
+    // game in our layer (a KK map's backpack and tooltips call it every update).
     function DzGetSelectedLeaderUnit takes nothing returns unit
-        return DzGetLocalSelectUnit(0)
+        local unit u
+        call GroupClear(gDzCompatSelectGroup)
+        call GroupEnumUnitsSelected(gDzCompatSelectGroup, GetLocalPlayer(), null)
+        set u = FirstOfGroup(gDzCompatSelectGroup)
+        call GroupClear(gDzCompatSelectGroup)
+        return u
     endfunction
 
     // ---- [APPROX] attack-ability cooldown reset (Reforged 3.0+) --------------
