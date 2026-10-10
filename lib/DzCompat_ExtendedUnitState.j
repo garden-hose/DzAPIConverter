@@ -44,7 +44,12 @@
 //
 // Only the indices this converter's target maps are known to actually use
 // are implemented below (decimal 18, 19, 20, 21, 22, 32, 37, 81 = hex 0x12,
-// 0x13, 0x14, 0x15, 0x16, 0x20, 0x25, 0x51). Add a case for any other index a
+// 0x13, 0x14, 0x15, 0x16, 0x20, 0x25, 0x51; and, read from the KKWE 2026
+// yd_jass_api.dll GetUnitState/SetUnitState hooks at 0x10020980/0x10020DC0,
+// 0x10, 0x11, 0x21-0x24, 0x26, 0x28, 0x29, 0x40, 0x50, 0x52-0x54, 0x56, 0x57,
+// 0x60). In the japi the weapon states of a unit without an attack read 0 and
+// ignore writes, and a real written to an integer field is TRUNCATED (R2I).
+// Add a case for any other index a
 // map turns out to need - unmapped indices fall through to a harmless 0 /
 // no-op, exactly the same silent failure they'd have had without this file, so
 // adding this library is always strictly an improvement, never a regression.
@@ -184,6 +189,113 @@
         return I2R(DzCompat_ExtStateGetAttackBonus(whichUnit))
     endfunction
 
+    // The japi's weapon states read the unit's attack object; a unit without one reads 0 and ignores
+    // writes (yd_jass_api.dll, the [U+0x1E8] check in 0x10020980). Proven in game in our layer.
+    function DzCompat_ExtStateHasAttack takes unit whichUnit returns boolean
+        return IsUnitType(whichUnit, UNIT_TYPE_MELEE_ATTACKER) or IsUnitType(whichUnit, UNIT_TYPE_RANGED_ATTACKER)
+    endfunction
+
+    // States of the unit itself (0x50 armor type, 0x52 acquisition range, 0x53/0x54 life/mana
+    // regeneration, 0x60 targeted as) and the other weapon-1 fields, all with a Reforged field.
+    // Returns 0. for an index it does not know.
+    function DzCompat_GetExtUnitStateMore takes unit whichUnit, integer idx returns real
+        if idx == 80 then
+            // [REAL] 0x50 armor (defense) type
+            return I2R(BlzGetUnitIntegerField(whichUnit, UNIT_IF_DEFENSE_TYPE))
+        elseif idx == 82 then
+            // [REAL] 0x52 acquisition range
+            return BlzGetUnitRealField(whichUnit, UNIT_RF_ACQUISITION_RANGE)
+        elseif idx == 83 then
+            // [REAL] 0x53 life regeneration
+            return BlzGetUnitRealField(whichUnit, UNIT_RF_HIT_POINTS_REGENERATION_RATE)
+        elseif idx == 84 then
+            // [REAL] 0x54 mana regeneration
+            return BlzGetUnitRealField(whichUnit, UNIT_RF_MANA_REGENERATION)
+        elseif idx == 96 then
+            // [REAL] 0x60 targeted as
+            return I2R(BlzGetUnitIntegerField(whichUnit, UNIT_IF_TARGETED_AS))
+        elseif not DzCompat_ExtStateHasAttack(whichUnit) then
+            return 0.
+        elseif idx == 16 then
+            // [REAL] 0x10 attack 1 number of dice
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0))
+        elseif idx == 17 then
+            // [REAL] 0x11 attack 1 sides per die
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0))
+        elseif idx == 33 then
+            // [REAL] 0x21 attack 1 damage loss factor
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_LOSS_FACTOR, 0)
+        elseif idx == 34 then
+            // [REAL] 0x22 attack 1 weapon sound
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_WEAPON_SOUND, 0))
+        elseif idx == 35 then
+            // [REAL] 0x23 attack 1 attack type
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_ATTACK_TYPE, 0))
+        elseif idx == 36 then
+            // [REAL] 0x24 attack 1 maximum number of targets
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_MAXIMUM_NUMBER_OF_TARGETS, 0))
+        elseif idx == 38 then
+            // [REAL] 0x26 attack 1 damage point
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_POINT, 0)
+        elseif idx == 40 then
+            // [REAL] 0x28 attack 1 backswing point
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BACKSWING_POINT, 0)
+        elseif idx == 41 then
+            // [REAL] 0x29 attack 1 targets allowed (the japi itself reads the 0x56 field here, a bug not copied)
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_TARGETS_ALLOWED, 0))
+        elseif idx == 64 then
+            // [REAL] 0x40 attack 2 range (read only here)
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_RANGE, 1)
+        elseif idx == 86 then
+            // [REAL] 0x56 attack 1 spill distance
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_DISTANCE, 0)
+        elseif idx == 87 then
+            // [REAL] 0x57 attack 1 spill radius
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_RADIUS, 0)
+        endif
+        return 0.
+    endfunction
+
+    // The writes of DzCompat_GetExtUnitStateMore's indices (0x40 is read only here). Weapon fields
+    // through index 0 [UNVERIFIED in game: the weapon-1 range needed the index quirk above].
+    function DzCompat_SetExtUnitStateMore takes unit whichUnit, integer idx, real value returns nothing
+        if idx == 80 then
+            call BlzSetUnitIntegerField(whichUnit, UNIT_IF_DEFENSE_TYPE, R2I(value))
+        elseif idx == 82 then
+            call BlzSetUnitRealField(whichUnit, UNIT_RF_ACQUISITION_RANGE, value)
+        elseif idx == 83 then
+            call BlzSetUnitRealField(whichUnit, UNIT_RF_HIT_POINTS_REGENERATION_RATE, value)
+        elseif idx == 84 then
+            call BlzSetUnitRealField(whichUnit, UNIT_RF_MANA_REGENERATION, value)
+        elseif idx == 96 then
+            call BlzSetUnitIntegerField(whichUnit, UNIT_IF_TARGETED_AS, R2I(value))
+        elseif not DzCompat_ExtStateHasAttack(whichUnit) then
+            return
+        elseif idx == 16 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0, R2I(value))
+        elseif idx == 17 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0, R2I(value))
+        elseif idx == 33 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_LOSS_FACTOR, 0, value)
+        elseif idx == 34 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_WEAPON_SOUND, 0, R2I(value))
+        elseif idx == 35 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_ATTACK_TYPE, 0, R2I(value))
+        elseif idx == 36 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_MAXIMUM_NUMBER_OF_TARGETS, 0, R2I(value))
+        elseif idx == 38 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_POINT, 0, value)
+        elseif idx == 40 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BACKSWING_POINT, 0, value)
+        elseif idx == 41 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_TARGETS_ALLOWED, 0, R2I(value))
+        elseif idx == 86 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_DISTANCE, 0, value)
+        elseif idx == 87 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_RADIUS, 0, value)
+        endif
+    endfunction
+
     function DzCompat_GetExtUnitState takes unit whichUnit, integer idx returns real
         if idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
@@ -225,15 +337,14 @@
             // the map's own >=3. threshold check reads this directly.
             return LoadReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9081)
         else
-            // Unmapped extended index - see the hex table above. Falls back to 0,
-            // same as an unconverted call would have returned in Reforged.
-            return 0.
+            // The other indices with a Reforged field (DzCompat_GetExtUnitStateMore); any other
+            // unmapped extended index - see the hex table above - falls back to 0, same as an
+            // unconverted call would have returned in Reforged.
+            return DzCompat_GetExtUnitStateMore(whichUnit, idx)
         endif
     endfunction
 
     function DzCompat_SetExtUnitState takes unit whichUnit, integer idx, real value returns nothing
-        local integer dice
-        local integer sides
         local integer id
         if idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
@@ -244,19 +355,11 @@
             set id = GetHandleId(whichUnit)
             call SaveReal(gDzCompatUnitStateTable, id, 9085, value)
             call SaveBoolean(gDzCompatUnitStateTable, id, 9086, true)
-        elseif idx == 20 then
-            // [APPROX] 0x14 Attack 1 min damage - write by adjusting base so
-            // base + dice + effective green bonus equals the requested minimum.
-            set dice = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0)
-            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value - DzCompat_ExtStateGetBonus19(whichUnit)) - dice)
-        elseif idx == 21 then
-            // [APPROX] 0x15 Attack 1 max damage - write by adjusting base so
-            // base + dice * sides + effective green bonus equals the requested
-            // maximum. Using GetBonus19 (not the raw 'Iatt' sum) keeps a local
-            // 0x13 override consistent with min/max read-modify-write.
-            set dice = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 0)
-            set sides = BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 0)
-            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value - DzCompat_ExtStateGetBonus19(whichUnit)) - (dice * sides))
+        elseif idx == 20 or idx == 21 then
+            // 0x14 / 0x15 Attack 1 min / max damage are READ ONLY: the japi's SetUnitState
+            // swallows the write (yd_jass_api.dll 0x10020E2C: no field written, the original
+            // native not called). This used to rewrite the base damage from the requested value.
+            return
         elseif idx == 22 then
             // [REAL] 0x16 Attack 1 range - see DzCompat_ExtStateSetAttackRange
             call DzCompat_ExtStateSetAttackRange(whichUnit, value)
@@ -286,8 +389,9 @@
             call DzCompat_ExtStateEnsureAttackSpeedHook()
             call DzCompat_ExtStateApplyAttackSpeed(whichUnit)
         else
-            // Any other index is unmapped - writes are silently dropped here,
-            // same as an unconverted SetUnitState call would have done nothing
-            // useful in Reforged. Add a case above if a map needs one to stick.
+            // The other indices with a Reforged field (DzCompat_SetExtUnitStateMore). Any other index
+            // is unmapped - writes are silently dropped there, same as an unconverted SetUnitState call
+            // would have done nothing useful in Reforged. Add a case if a map needs one to stick.
+            call DzCompat_SetExtUnitStateMore(whichUnit, idx, value)
         endif
     endfunction

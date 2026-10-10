@@ -28,7 +28,8 @@ import java.util.TreeSet;
  * to call DzCompat_GetExtUnitState(unit, N) / DzCompat_SetExtUnitState(unit,
  * N, value) instead (see lib/DzCompat_ExtendedUnitState.j), so each index
  * gets one real (or documented best-effort) Reforged implementation instead
- * of silently returning 0 at every call site.
+ * of silently returning 0 at every call site. Blizzard.j's GetUnitStateSwap(ConvertUnitState(N), u)
+ * is the same read with its arguments swapped and is rewritten to DzCompat_GetExtUnitState(u, N) too.
  *
  * Parenthesis/string aware for the same reason ExecuteScriptScanner is: the
  * unit and value arguments are often themselves nested calls
@@ -41,6 +42,11 @@ final class ExtendedUnitStateConverter {
 
     private static final String GET_NAME = "GetUnitState";
     private static final String SET_NAME = "SetUnitState";
+    /** Blizzard.j's GetUnitStateSwap(whichState, whichUnit): the same read with the arguments swapped. The
+     *  japi hooks the GetUnitState native it calls, so on the platform it reads the extended index too
+     *  (one KK map calls it 402 times, e.g. SetUnitState(u, ConvertUnitState(0x12),
+     *  GetUnitStateSwap(ConvertUnitState(0x12), u) + x)); left alone it read 0 in Reforged. */
+    private static final String SWAP_NAME = "GetUnitStateSwap";
     private static final String CONVERT_NAME = "ConvertUnitState";
 
     /** Stock indices Reforged's own GetUnitState/SetUnitState already handle correctly. */
@@ -82,7 +88,8 @@ final class ExtendedUnitStateConverter {
 
     /** Indices lib/DzCompat_ExtendedUnitState.j has a real/approximate case for. Kept in sync
      *  with that file by hand - update both when adding support for a new index. */
-    private static final TreeSet<Long> KNOWN_INDICES = new TreeSet<>(List.of(18L, 19L, 20L, 21L, 22L, 32L, 37L, 81L));
+    private static final TreeSet<Long> KNOWN_INDICES = new TreeSet<>(List.of(16L, 17L, 18L, 19L, 20L, 21L, 22L, 32L,
+            33L, 34L, 35L, 36L, 37L, 38L, 40L, 41L, 64L, 80L, 81L, 82L, 83L, 84L, 86L, 87L, 96L));
 
     static Result convert(List<String> inputLines) {
         List<String> lines = new ArrayList<>(inputLines);
@@ -92,7 +99,7 @@ final class ExtendedUnitStateConverter {
 
         for (int ln = 0; ln < lines.size(); ln++) {
             String line = lines.get(ln);
-            if (!line.contains(GET_NAME) && !line.contains(SET_NAME)) continue;
+            if (!line.contains(GET_NAME) && !line.contains(SET_NAME)) continue; // SWAP_NAME contains GET_NAME
             String rewritten = rewriteLine(line, rewrittenByIndex, usedGet, usedSet);
             if (rewritten != null) lines.set(ln, rewritten);
         }
@@ -170,6 +177,7 @@ final class ExtendedUnitStateConverter {
     }
 
     private static String matchNameAt(String line, int i, int end) {
+        if (line.startsWith(SWAP_NAME, i)) return SWAP_NAME;
         if (line.startsWith(GET_NAME, i)) return GET_NAME;
         if (line.startsWith(SET_NAME, i)) return SET_NAME;
         return null;
@@ -194,12 +202,13 @@ final class ExtendedUnitStateConverter {
     private static String tryRewriteCall(String funcName, String args, Map<Long, Integer> rewrittenByIndex,
                                           boolean[] usedGet, boolean[] usedSet) {
         List<String> parts = JassExpr.splitTopLevel(args, ',');
-        boolean isGet = funcName.equals(GET_NAME);
+        boolean isSwap = funcName.equals(SWAP_NAME);
+        boolean isGet = isSwap || funcName.equals(GET_NAME);
         if (isGet && parts.size() != 2) return null;
         if (!isGet && parts.size() != 3) return null;
 
-        String unitArg = parts.get(0).trim();
-        String stateArg = parts.get(1).trim();
+        String unitArg = parts.get(isSwap ? 1 : 0).trim();
+        String stateArg = parts.get(isSwap ? 0 : 1).trim();
         String valueArg = isGet ? null : parts.get(2).trim();
 
         String rewrittenUnitArg = rewriteExpr(unitArg, unitArg.length(), rewrittenByIndex, usedGet, usedSet);
@@ -214,6 +223,7 @@ final class ExtendedUnitStateConverter {
             // This call itself isn't one to rewrite (stock 0-3, or a non-literal state
             // expression), but a nested call within its arguments might still have changed.
             if (!innerChanged) return null;
+            if (isSwap) return SWAP_NAME + "(" + stateArg + ", " + effectiveUnitArg + ")";
             return isGet
                     ? GET_NAME + "(" + effectiveUnitArg + ", " + stateArg + ")"
                     : SET_NAME + "(" + effectiveUnitArg + ", " + stateArg + ", " + effectiveValueArg + ")";
