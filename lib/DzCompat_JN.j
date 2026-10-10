@@ -27,6 +27,17 @@ globals
     real array    gDzJN_StopwatchStart
     real array    gDzJN_StopwatchTotal
     boolean array gDzJN_StopwatchRunning
+
+    // JNGetMaxAttackSpeed / JNGetSyncDelay: what the map set, from the client's defaults (the attack speed
+    // cap of Game.dll, 5.0, which the JassNative plugin restores at every map end; the Hera loader sets the
+    // network delay to 100 ms). Reforged changes neither, so the value only reads back.
+    real    gDzJN_MaxAttackSpeed = 5.0
+    integer gDzJN_SyncDelay = 100
+
+    // JNStringCalcLines: lines counted, width of the current line, width of the current word
+    integer gDzJN_CLLines = 0
+    integer gDzJN_CLLine = 0
+    integer gDzJN_CLWord = 0
 endglobals
 
 // ---- ASCII helpers ---------------------------------------------------------
@@ -79,20 +90,25 @@ function JNStringContains takes string str, string sub returns boolean
     return JNStringPos(str, sub) != -1
 endfunction
 
+// As the M16 client (Cirnix.JassNative.Common JassString.cs StringSub): a length of 0 or a start at or
+// past the end gives ""; a negative start is eaten from the length (length += start, start = 0); a
+// NEGATIVE length, or one past the end, gives the REST of the text (it used to give "" for length < 0).
+// Proven in game in our layer (the M16 maps).
 function JNStringSub takes string str, integer start, integer length returns string
     local integer n
-    if str == null or length <= 0 then
+    if str == null or length == 0 then
         return ""
     endif
     if start < 0 then
+        set length = length + start
         set start = 0
     endif
     set n = StringLength(str)
     if start >= n then
         return ""
     endif
-    if start + length > n then
-        set length = n - start
+    if length < 0 or start + length > n then
+        return SubString(str, start, n)
     endif
     return SubString(str, start, start + length)
 endfunction
@@ -192,7 +208,9 @@ function JNStringTrim takes string str returns string
     return JNStringTrimEnd(JNStringTrimStart(str))
 endfunction
 
-// index is clamped into 0 .. length, so an out-of-range index appends instead of failing.
+// As the M16 client (JassString.cs StringInsert: str.PadRight(index).Insert(index, val)): a negative
+// index is 0, and an index past the end first PADS the text with spaces up to it (it used to append
+// at the end instead).
 function JNStringInsert takes string str, integer index, string val returns string
     local integer n
     if str == null then
@@ -204,9 +222,12 @@ function JNStringInsert takes string str, integer index, string val returns stri
     set n = StringLength(str)
     if index < 0 then
         set index = 0
-    elseif index > n then
-        set index = n
     endif
+    loop
+        exitwhen n >= index
+        set str = str + " "
+        set n = n + 1
+    endloop
     return DzStringInsert(str, index, val)
 endfunction
 
@@ -221,12 +242,93 @@ function JNStringReplace takes string str, string old, string newstr returns str
     return DzStringReplace(str, old, newstr, true)
 endfunction
 
-// Number of lines str needs when `length` characters fit on one line.
-function JNStringCalcLines takes string str, integer length returns integer
-    if str == null or length <= 0 then
-        return 1
+// A hexadecimal digit (for the |cAARRGGBB color codes of JNStringCalcLines).
+function DzCompat_JN_IsHex takes string c returns boolean
+    local integer v = DzCompat_JN_Ord(c)
+    return (v >= 48 and v <= 57) or (v >= 65 and v <= 70) or (v >= 97 and v <= 102)
+endfunction
+
+// Adds one character of width w to the word being measured and breaks the line where the client does.
+// gDzJN_CL* hold the state of the JNStringCalcLines call in progress.
+function DzCompat_JN_CalcAdd takes integer w, integer length returns nothing
+    set gDzJN_CLWord = gDzJN_CLWord + w
+    if gDzJN_CLWord >= length then
+        set gDzJN_CLWord = 0
+        set gDzJN_CLLines = gDzJN_CLLines + 1
+    elseif gDzJN_CLLine > 0 and gDzJN_CLWord + gDzJN_CLLine + 1 >= length then
+        set gDzJN_CLLine = 0
+        set gDzJN_CLLines = gDzJN_CLLines + 1
     endif
-    return 1 + StringLength(str) / length
+endfunction
+
+// The M16 client's line count (JassString.cs StringCalcLines; maps use it to size a tooltip box): the
+// text without trailing spaces is cut into words at spaces; a character below U+0100 is 1 wide and any
+// other (hangul, CJK) 2; |cAARRGGBB and |r have no width; |n and a line feed break the line; a line breaks
+// when a word alone reaches `length`, or when the word plus what the line already holds passes it. null or
+// a length <= 0 gives 0. It used to be 1 + characters / length, which gave half the lines of a Korean
+// tooltip. Proven in game in our layer.
+// [APPROX] Strings are bytes here: a run of non-ASCII bytes is read as 3-byte UTF-8 characters (all of
+// hangul and CJK), so a 2-byte character (Latin-1, Cyrillic) is measured wrong.
+function JNStringCalcLines takes string str, integer length returns integer
+    local integer n
+    local integer i = 0
+    local integer k
+    local string c
+    local string d
+    if str == null or length <= 0 then
+        return 0
+    endif
+    set str = JNStringTrimEnd(str)
+    set n = StringLength(str)
+    set gDzJN_CLLines = 1
+    set gDzJN_CLLine = 0
+    set gDzJN_CLWord = 0
+    loop
+        exitwhen i >= n
+        set c = SubString(str, i, i + 1)
+        set d = SubString(str, i + 1, i + 2)
+        if c == " " then
+            // the end of a word (an empty one, between two spaces, counts 1 as well)
+            set gDzJN_CLLine = gDzJN_CLLine + gDzJN_CLWord + 1
+            set gDzJN_CLWord = 0
+            set i = i + 1
+        elseif c == "\n" or (c == "|" and (d == "n" or d == "N")) then
+            if c == "|" then
+                set i = i + 1
+            endif
+            set i = i + 1
+            set gDzJN_CLLine = 0
+            set gDzJN_CLWord = 0
+            set gDzJN_CLLines = gDzJN_CLLines + 1
+            if i >= n or SubString(str, i, i + 1) == " " then
+                set gDzJN_CLWord = 1
+            endif
+        elseif c == "\r" then
+            set i = i + 1
+        elseif c == "|" and (d == "r" or d == "R") then
+            set i = i + 2
+        elseif c == "|" and (d == "c" or d == "C") then
+            // a whole |cAARRGGBB has no width; an incomplete one counts its "|"
+            set k = 0
+            loop
+                exitwhen k >= 8 or not DzCompat_JN_IsHex(SubString(str, i + 2 + k, i + 3 + k))
+                set k = k + 1
+            endloop
+            if k >= 8 then
+                set i = i + 10
+            else
+                call DzCompat_JN_CalcAdd(1, length)
+                set i = i + 1
+            endif
+        elseif DzCompat_JN_Ord(c) >= 0 or c == "\t" then
+            call DzCompat_JN_CalcAdd(1, length)
+            set i = i + 1
+        else
+            call DzCompat_JN_CalcAdd(2, length)
+            set i = i + 3
+        endif
+    endloop
+    return gDzJN_CLLines
 endfunction
 
 // ---- base64 ----------------------------------------------------------------
@@ -444,12 +546,100 @@ function JNStopwatchElapsedHour takes integer id returns integer
 endfunction
 
 // ---- casts / browser -------------------------------------------------------
+// JNI2R / JNR2I are BIT casts in the M16 client (BitConverter: the 32 bits of the integer read as the
+// game's 32-bit IEEE 754 real, and back), not value conversions: a map that stores XP as
+// BitXor(JNR2I(xp), key) lost the fraction with R2I. Proven in game in our layer (the Blc1 M16 map).
+// Inf/NaN (exponent 255) come out as the largest exponent.
 function JNI2R takes integer i returns real
-    return I2R(i)
+    local boolean neg = i < 0
+    local integer e
+    local integer m
+    local real v
+    if i == 0 or i == -2147483647 - 1 then
+        return 0.
+    endif
+    if neg then
+        set i = i + 2147483647 + 1
+    endif
+    set e = i / 8388608
+    set m = i - e * 8388608
+    if e == 0 then
+        set v = I2R(m)
+        set e = -149
+    else
+        set v = 1. + I2R(m) / 8388608.
+        set e = e - 127
+    endif
+    loop
+        exitwhen e <= 0
+        set v = v * 2.
+        set e = e - 1
+    endloop
+    loop
+        exitwhen e >= 0
+        set v = v * 0.5
+        set e = e + 1
+    endloop
+    if neg then
+        return -v
+    endif
+    return v
 endfunction
 
+// The inverse of JNI2R: sign, exponent with the 127 bias, 23 mantissa bits (exponent 0 for subnormals).
 function JNR2I takes real r returns integer
-    return R2I(r)
+    local integer e = 127
+    local integer m
+    local real a = r
+    if r == 0. then
+        return 0
+    endif
+    if r < 0. then
+        set a = -r
+    endif
+    loop
+        exitwhen a < 2. or e >= 254
+        set a = a * 0.5
+        set e = e + 1
+    endloop
+    loop
+        exitwhen a >= 1. or e <= 1
+        set a = a * 2.
+        set e = e - 1
+    endloop
+    if a < 1. then
+        set m = R2I(a * 8388608.)
+        set e = 0
+    else
+        set m = R2I((a - 1.) * 8388608.)
+    endif
+    if r < 0. then
+        return e * 8388608 + m - 2147483647 - 1
+    endif
+    return e * 8388608 + m
+endfunction
+
+function JNGetMaxAttackSpeed takes nothing returns real
+    return gDzJN_MaxAttackSpeed
+endfunction
+
+function JNSetMaxAttackSpeed takes real speed returns nothing
+    set gDzJN_MaxAttackSpeed = speed
+endfunction
+
+// The client clamps the delay into 10 .. 550 ms (JassMiscellaneous.cs SetSyncDelay).
+function JNGetSyncDelay takes nothing returns integer
+    return gDzJN_SyncDelay
+endfunction
+
+function JNSetSyncDelay takes integer delay returns nothing
+    if delay <= 10 then
+        set gDzJN_SyncDelay = 10
+    elseif delay >= 550 then
+        set gDzJN_SyncDelay = 550
+    else
+        set gDzJN_SyncDelay = delay
+    endif
 endfunction
 
 // No browser can be opened from JASS: the address is shown to the local player instead.
