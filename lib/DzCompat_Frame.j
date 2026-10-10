@@ -69,6 +69,8 @@
         //   12 font height (0 = default)   13 horizontal justify (0 = default, left)
         //   15 width last applied
         hashtable gDzCompatTextFit = InitHashtable()
+        // DzFrameSetTextAlignment: Dz frame id -> 0 vertical, 1 horizontal (ConvertTextAlignType indices)
+        hashtable gDzCompatTextAlign = InitHashtable()
         // Set to false to turn the auto-fit off.
         constant boolean DZCOMPAT_TEXT_AUTOFIT = true
         // Estimated width of one character, as a fraction of the font height. Measured
@@ -1046,7 +1048,12 @@ endfunction
         call BlzFrameSetSpriteAnimate(f, animId, flags)
     endfunction
 
-    function DzGetColor takes integer r, integer g, integer b, integer a returns integer
+    // The FIRST argument is the alpha: the real client builds (a1 << 24) | (a2 << 16) | (a3 << 8) | a4,
+    // i.e. ARGB (kkapi_local_plugin.dll 0x10079030, dzclient_api.dll 0x10018b40, dz_w3_plugin.dll
+    // 0x10026680). The KKWE GUI action reads "Alph, R, G, B", KK maps call DzGetColor(255, r, g, b) and M16
+    // maps declare the native as (a, r, g, b); the r, g, b, a names some headers use are misleading.
+    // With alpha taken from the 4th argument, DzGetColor(255, 255, 255, 0) (opaque yellow) came out invisible.
+    function DzGetColor takes integer a, integer r, integer g, integer b returns integer
         return BlzConvertColor(a, r, g, b)
     endfunction
 
@@ -1103,36 +1110,45 @@ endfunction
         return BlzFrameGetTextSizeLimit(f)
     endfunction
 
-    // The previous version treated align as ConvertTextAlignType's own two index
-    // sets (0-2 vertical, 3-5 horizontal) - a reasonable-looking guess, but wrong: a real
-    // converted map's own align values include 0, 6, 7 and 50, all outside that 0-5
-    // range, so most calls were silently dropped by the old bounds check. A comparison
-    // tool that ships a working DzFrameSetTextAlignment treats 0 and 100 as LEFT/RIGHT
-    // with vertical always MIDDLE - i.e. align is a 0-100 horizontal position, not a
-    // vertical/horizontal selector - which is also consistent with the same real map's
-    // own 0/50 pairs (used to flip a tab label between left-aligned and centered to show
-    // which tab is selected). Bucketing 0-100 into thirds additionally covers 6 and 7
-    // (both round down to LEFT, which fits their real use on left-justified tooltip
-    // text) without needing an exact 0/50/100 match.
-    //
-    // A map's own DzFrameSetTextAlignment calls all pass align=2, which is also
-    // consistent with either scheme (LEFT here; BOTTOM there), so it doesn't
-    // help decide. Pending a data point that actually
-    // discriminates between the two.
+    // align is a set of BIT FLAGS in the real client: vertical 1 top, 2 middle, 4 bottom;
+    // horizontal 8 left, 16 center, 32 right. The first bit found on each axis wins (1 > 2 > 4,
+    // 8 > 16 > 32) and an axis with no bit keeps what the frame already had (kkapi_local_plugin.dll
+    // 0x100788e0, dzclient_api.dll 0x1001afd0, dz_w3_plugin.dll 0x10029110: the same code in all three).
+    // The M16 JN library builds the same bits (JNFrameSetTextAlignment: TOP 1, MIDDLE 2, BOTTOM 4 +
+    // LEFT 8, CENTER 16, RIGHT 32). This is the data point the previous 0-100 reading was waiting for:
+    // 50 = middle + center, 6 = middle (horizontal kept), 7 = top, and 0 changes nothing, so a label set
+    // to 50 and then to 0 stays centered in the original game too.
+    // Reforged sets both axes in one call, so the last value of each axis is kept per frame in
+    // gDzCompatTextAlign ([APPROX]: an axis the map never set starts as middle / center, the frame's own
+    // template justification is not readable).
     function DzFrameSetTextAlignment takes integer frame, integer align returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
-        local integer horz
-        if f == null or align < 0 then
+        local integer vert = 1 // TEXT_JUSTIFY_MIDDLE
+        local integer horz = 4 // TEXT_JUSTIFY_CENTER
+        if f == null or BlzBitAnd(align, 63) == 0 then
             return
         endif
-        if align <= 33 then
-            set horz = 3 // TEXT_JUSTIFY_LEFT
-        elseif align >= 67 then
-            set horz = 5 // TEXT_JUSTIFY_RIGHT
-        else
-            set horz = 4 // TEXT_JUSTIFY_CENTER
+        if HaveSavedInteger(gDzCompatTextAlign, frame, 0) then
+            set vert = LoadInteger(gDzCompatTextAlign, frame, 0)
+            set horz = LoadInteger(gDzCompatTextAlign, frame, 1)
         endif
-        call BlzFrameSetTextAlignment(f, ConvertTextAlignType(1), ConvertTextAlignType(horz)) // vertical always MIDDLE
+        if BlzBitAnd(align, 1) != 0 then
+            set vert = 0 // TEXT_JUSTIFY_TOP
+        elseif BlzBitAnd(align, 2) != 0 then
+            set vert = 1 // TEXT_JUSTIFY_MIDDLE
+        elseif BlzBitAnd(align, 4) != 0 then
+            set vert = 2 // TEXT_JUSTIFY_BOTTOM
+        endif
+        if BlzBitAnd(align, 8) != 0 then
+            set horz = 3 // TEXT_JUSTIFY_LEFT
+        elseif BlzBitAnd(align, 16) != 0 then
+            set horz = 4 // TEXT_JUSTIFY_CENTER
+        elseif BlzBitAnd(align, 32) != 0 then
+            set horz = 5 // TEXT_JUSTIFY_RIGHT
+        endif
+        call SaveInteger(gDzCompatTextAlign, frame, 0, vert)
+        call SaveInteger(gDzCompatTextAlign, frame, 1, horz)
+        call BlzFrameSetTextAlignment(f, ConvertTextAlignType(vert), ConvertTextAlignType(horz))
         if LoadBoolean(gDzCompatTextFit, frame, 0) then
             call SaveInteger(gDzCompatTextFit, frame, 13, horz)
             call DzCompat_TextFit(frame, true)
