@@ -150,6 +150,9 @@ final class ConverterConstants {
         "DzAPI_Map_GetServerValueErrorCode",
         "DzAPI_Map_StoreString", "DzAPI_Map_StoreInteger", "DzAPI_Map_StoreReal", "DzAPI_Map_StoreBoolean",
         "DzAPI_Map_GetStoredString", "DzAPI_Map_GetStoredInteger", "DzAPI_Map_GetStoredReal", "DzAPI_Map_GetStoredBoolean",
+        // DzCompat_Platform.j - platform answers the real client registers as natives (lobby, VIP, public archive)
+        "DzAPI_Map_IsRPGLobby", "DzAPI_Map_IsRedVIP", "DzAPI_Map_IsBlueVIP", "DzAPI_Map_GetPlatformVIP",
+        "DzAPI_Map_SavePublicArchive", "DzAPI_Map_GetPublicArchive",
 		// DzCompat_Core.j - a native that some environments (YDWE / AI script natives) provide
         "UnitAlive", "DzF2I", "DzI2F", "DzK2I", "DzI2K",
         // DzCompat_JN.j - JN (JassNative) strings, base64, stopwatch, casts, login answers
@@ -174,7 +177,8 @@ final class ConverterConstants {
         "DzAPI_Map_SaveServerValue", "DzAPI_Map_GetServerValue",
         "DzAPI_Map_GetServerValueErrorCode",
         "DzAPI_Map_StoreString", "DzAPI_Map_StoreInteger", "DzAPI_Map_StoreReal", "DzAPI_Map_StoreBoolean",
-        "DzAPI_Map_GetStoredString", "DzAPI_Map_GetStoredInteger", "DzAPI_Map_GetStoredReal", "DzAPI_Map_GetStoredBoolean"
+        "DzAPI_Map_GetStoredString", "DzAPI_Map_GetStoredInteger", "DzAPI_Map_GetStoredReal", "DzAPI_Map_GetStoredBoolean",
+        "DzAPI_Map_SavePublicArchive", "DzAPI_Map_GetPublicArchive"
     ));
 
     /** With "Remove local save" on, these archive functions are replaced by empty bodies. They are

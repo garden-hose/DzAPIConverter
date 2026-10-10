@@ -5,6 +5,14 @@
 // Goal: completely emulate the remote server on the client using
 // DzCompat_Archive.j (persistent text file) plus a few session defaults.
 //
+// What only the platform SERVER knew (lobby, VIP, mall stock) answers as if the
+// server were there and the player had it, not the "no server" neutral value:
+// the real clients' own offline patches (kkapi_local_plugin.dll, dz_w3_plugin.dll,
+// the M16 dzclient_api.dll) answer 0 / false there only because their tester writes
+// the wanted answers in an INI by hand. A map that reads false for the RPG lobby
+// switches to its author's test mode (measured in a KK map). The Local* setters
+// below still override every one of these per player.
+//
 // Key namespaces inside the archive (per player unless noted):
 //   STAT_<k>           map stats
 //   LADDER_<k>         ladder stats
@@ -28,7 +36,8 @@
 globals
     integer gDzServer_MatchType = 0
     boolean gDzServer_IsRPGLadder = false
-    boolean gDzServer_IsRPGLobby = false
+    // true: the map runs in the platform's RPG lobby (see the header)
+    boolean gDzServer_IsRPGLobby = true
     boolean gDzServer_IsRPGQuickMatch = false
     boolean gDzServer_IsMapTest = false
     integer gDzServer_GameStartTime = 0
@@ -126,12 +135,18 @@ function DzAPI_Map_HasMallItem takes player whichPlayer, string key returns bool
     return false
 endfunction
 
+// An item whose stock was never set locally (DzAPI_Map_LocalGrantMallItem) counts 1 and can be
+// spent (see the header); a stock that was set is counted down as before.
 function DzAPI_Map_GetMallItemCount takes player whichPlayer, string key returns integer
-    return DzServer_GetInt(whichPlayer, "MALLC_" + key, 0)
+    return DzServer_GetInt(whichPlayer, "MALLC_" + key, 1)
 endfunction
 
 function DzAPI_Map_ConsumeMallItem takes player whichPlayer, string key, integer count returns boolean
-    local integer have = DzServer_GetInt(whichPlayer, "MALLC_" + key, 0)
+    local integer have
+    if DzServer_Get(whichPlayer, "MALLC_" + key) == "" then
+        return true
+    endif
+    set have = DzServer_GetInt(whichPlayer, "MALLC_" + key, 0)
     if have < count then
         return false
     endif
@@ -198,8 +213,9 @@ function DzAPI_Map_LocalSetGuild takes player whichPlayer, string name, integer 
     call DzServer_SetInt(whichPlayer, "GUILD_ROLE", role)
 endfunction
 
+// VIP unless set otherwise with DzAPI_Map_LocalSetVIP (see the header): 1, as maps test > 0
 function DzAPI_Map_GetPlatformVIP takes player whichPlayer returns integer
-    return DzServer_GetInt(whichPlayer, "PLATFORM_VIP", 0)
+    return DzServer_GetInt(whichPlayer, "PLATFORM_VIP", 1)
 endfunction
 
 function DzAPI_Map_IsPlatformVIP takes player whichPlayer returns boolean
@@ -207,17 +223,27 @@ function DzAPI_Map_IsPlatformVIP takes player whichPlayer returns boolean
 endfunction
 
 function DzAPI_Map_IsRedVIP takes player whichPlayer returns boolean
-    return DzServer_GetBool(whichPlayer, "REDVIP")
+    return DzServer_Get(whichPlayer, "REDVIP") != "0"
 endfunction
 
 function DzAPI_Map_IsBlueVIP takes player whichPlayer returns boolean
-    return DzServer_GetBool(whichPlayer, "BLUEVIP")
+    return DzServer_Get(whichPlayer, "BLUEVIP") != "0"
 endfunction
 
 function DzAPI_Map_LocalSetVIP takes player whichPlayer, boolean red, boolean blue, integer platformVip returns nothing
     call DzServer_SetBool(whichPlayer, "REDVIP", red)
     call DzServer_SetBool(whichPlayer, "BLUEVIP", blue)
     call DzServer_SetInt(whichPlayer, "PLATFORM_VIP", platformVip)
+endfunction
+
+// The public archive natives: the same archive slots as RequestExtra*Data 31 (write) / 32 (read).
+// The real client keeps them (kkapi_local_plugin.dll 0x1006d140 / 0x1006be70, SPA-<pid>-<key>).
+function DzAPI_Map_SavePublicArchive takes player whichPlayer, string key, string value returns boolean
+    return DzCompat_Archive_Save(whichPlayer, "PUB_" + key, value)
+endfunction
+
+function DzAPI_Map_GetPublicArchive takes player whichPlayer, string key returns string
+    return DzCompat_Archive_Load(whichPlayer, "PUB_" + key)
 endfunction
 
 function DzAPI_Map_IsAchievementCompleted takes player whichPlayer, string key returns boolean

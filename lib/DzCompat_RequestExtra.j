@@ -44,7 +44,7 @@ function RequestExtraIntegerDataa takes integer dataType, player whichPlayer, st
         elseif dataType == 28 then // OrpgTrigger (write, return value unused by caller - store flag)
             call DzServer_Set(whichPlayer, "ORPG_" + param1, param2)
             return 0
-        elseif dataType == 30 then // GetPlatformVIP - 0 keeps DzAPI_Map_IsPlatformVIP(p) false too
+        elseif dataType == 30 then // GetPlatformVIP - 1 unless set locally, see the header of DzCompat_Platform.j
             return DzAPI_Map_GetPlatformVIP(whichPlayer)
         elseif dataType == 33 then // UseConsumablesItem (write, return value unused by caller)
             if DzAPI_Map_ConsumeMallItem(whichPlayer, param1, 1) then
@@ -232,6 +232,9 @@ function RequestExtraStringDataa takes integer dataType, player whichPlayer, str
             return DzCompat_Archive_Load(Player(PLAYER_NEUTRAL_PASSIVE), "SYS_" + param1)
         elseif dataType == 36 then // Global_GetStoreString
             return DzCompat_Archive_Load(Player(PLAYER_NEUTRAL_PASSIVE), "G_" + param1)
+        elseif dataType == 37 then // Global_StoreString: the KKWE DzAPI.j writes it through StringData too (kkapi_local_plugin.dll writes 37 whatever the getter)
+            call DzCompat_Archive_Save(Player(PLAYER_NEUTRAL_PASSIVE), "G_" + param1, param2)
+            return ""
         elseif dataType == 38 then // case-sensitive archive get
             return DzCompat_Archive_Load(whichPlayer, "CS_" + param1)
         elseif dataType == 79 then // CustomRankPlayerName
