@@ -56,9 +56,16 @@ final class ConversionSettings {
      *  ability_patched.ini next to ability.ini. ability.ini itself is never modified. Needs
      *  lib/ReforgedStockAbilityIds.txt. */
     boolean patchAbilityRequirements = true;
-
+	
     /** When true, DestroyTimer call sites are rewritten to DzCompat_DestroyTimer, which
      *  null-checks and pauses before destroy. Prevents Reforged crashes from double-destroy
      *  of the same timer handle (callback + cleanup paths). On by default. */
     boolean convertSafeTimerDestroy = true;
+
+    /** When true, the "return bug" typecast functions of old maps (the ones wrapped in the
+     *  //# +nosemanticerror pragma, such as H2I) get a body Reforged 3.0 compiles, because
+     *  its compiler refuses the old form. handle -> integer uses GetHandleId; casts with no
+     *  Reforged equivalent return a neutral value and are reported. Right after the
+     *  RequestExtra rename step. On by default. */
+    boolean fixReturnBug = true;
 }

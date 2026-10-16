@@ -125,6 +125,33 @@ final class ForwardConverter {
             }
         }
 
+        // "Return bug" typecast functions (//# +nosemanticerror): Reforged 3.0 does not know the
+        // pragma and refuses the old body, so each such function gets a body it accepts.
+        // Independent of Dz/EX usage; a script without the pragma is left untouched.
+        if (settings.fixReturnBug) {
+            ReturnBugFixer.Result bugResult = ReturnBugFixer.fix(jassScript);
+            jassScript = bugResult.lines;
+            if (bugResult.changedAnything()) {
+                logger.log("[" + Timestamps.now() + "] Return bug: rewrote " + bugResult.fixed.size() +
+                           " typecast function(s) with a body Reforged 3.0 compiles");
+                List<String> lost = new ArrayList<>();
+                for (ReturnBugFixer.Fixed fx : bugResult.fixed) {
+                    if (!fx.exact && fx.uses > 0) {
+                        lost.add(fx.name + " -> " + fx.returnType + " (" + fx.uses + " use(s))");
+                    }
+                }
+                if (!lost.isEmpty()) {
+                    logger.log("[" + Timestamps.now() + "] WARNING: return bug: these typecasts have no Reforged " +
+                               "equivalent and now return a neutral value, so what depends on them will not work: " +
+                               String.join(", ", lost));
+                }
+            }
+            if (bugResult.strayPragmas > 0) {
+                logger.log("[" + Timestamps.now() + "] WARNING: return bug: " + bugResult.strayPragmas +
+                           " //# +nosemanticerror pragma(s) are not followed by a function and were left as they are");
+            }
+        }
+
         // Extended unit-state (GetUnitState/SetUnitState + ConvertUnitState(N) hook)
         // call-site rewrite. Independent of the native-declaration passes above/below -
         // these are stock native calls, not "native X" declarations - so it runs as its
@@ -646,7 +673,7 @@ final class ForwardConverter {
                 }
             }
         }
-
+		
         if (!unknownNatives.isEmpty()) {
             // De-dupe while preserving order for a cleaner log
             Set<String> seen = new LinkedHashSet<>(unknownNatives);
