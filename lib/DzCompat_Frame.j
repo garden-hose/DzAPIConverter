@@ -99,6 +99,11 @@
         timer gDzCompatClickClock = null
         // Two click events for the same frame closer together than this are one click.
         constant real DZCOMPAT_CLICK_WINDOW = 0.20
+        // Dz ignores the alpha byte of a |cAARRGGBB colour code, and many maps write |c00RRGGBB
+        // (alpha 00). Reforged honours it, so that text is drawn fully transparent. When true,
+        // DzFrameSetText and DzFrameAddText turn every |c00 into |cff. Set to false to keep the
+        // text exactly as the map wrote it.
+        constant boolean DZCOMPAT_TEXT_FIX_ALPHA = true
 
         // A frame of type BUTTON that inherits no template does not report clicks in
         // Reforged (it still reports mouse enter/leave); GLUETEXTBUTTON does. When true,
@@ -1066,6 +1071,35 @@ endfunction
         return BlzConvertColor(a, r, g, b)
     endfunction
 
+    // Turns every |c00RRGGBB in a label into |cffRRGGBB (see DZCOMPAT_TEXT_FIX_ALPHA). Both
+    // spellings have the same length, so the visible length DzCompat_TextVisibleLen reports is
+    // unchanged. Text without a |c00 is returned as it came in.
+    function DzCompat_FixTextAlpha takes string text returns string
+        local integer i = 0
+        local integer start = 0
+        local integer n = StringLength(text)
+        local string result = ""
+        local string c
+        if not DZCOMPAT_TEXT_FIX_ALPHA then
+            return text
+        endif
+        loop
+            exitwhen i + 4 > n
+            set c = SubString(text, i, i + 1)
+            if c == "|" and StringCase(SubString(text, i + 1, i + 4), false) == "c00" then
+                set result = result + SubString(text, start, i) + "|cff"
+                set i = i + 4
+                set start = i
+            else
+                set i = i + 1
+            endif
+        endloop
+        if start == 0 then
+            return text
+        endif
+        return result + SubString(text, start, n)
+    endfunction
+
     function DzFrameSetText takes integer frame, string text returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
         if f == null then
@@ -1074,6 +1108,7 @@ endfunction
         if text == null then
             set text = ""
         endif
+        set text = DzCompat_FixTextAlpha(text)
         call BlzFrameSetText(f, text)
         call DzCompat_TextFit(frame, false)
     endfunction
@@ -1094,6 +1129,7 @@ endfunction
         if text == null then
             set text = ""
         endif
+        set text = DzCompat_FixTextAlpha(text)
         call BlzFrameAddText(f, text)
     endfunction
 
