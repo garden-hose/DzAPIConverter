@@ -180,7 +180,7 @@ final class ItemRequirementPatcher {
     // File reading / writing that keeps encoding, BOM and line endings of item.ini
     // -------------------------------------------------------------------------
 
-    private static final class Source {
+    static final class Source {
         final List<String> lines;
         final Charset charset;
         final boolean bom;
@@ -193,7 +193,7 @@ final class ItemRequirementPatcher {
         }
     }
 
-    private static Source read(Path file, Logger logger) throws IOException {
+    static Source read(Path file, Logger logger) throws IOException {
         byte[] bytes = Files.readAllBytes(file);
         boolean bom = bytes.length >= 3 && (bytes[0] & 0xFF) == 0xEF
                 && (bytes[1] & 0xFF) == 0xBB && (bytes[2] & 0xFF) == 0xBF;
@@ -218,7 +218,7 @@ final class ItemRequirementPatcher {
         }
     }
 
-    private static void writeAll(Path file, List<String> lines, Source src) throws IOException {
+    static void writeAll(Path file, List<String> lines, Source src) throws IOException {
         String text = String.join(src.eol, lines);
         byte[] body = text.getBytes(src.charset);
         if (!src.bom) {
@@ -233,7 +233,7 @@ final class ItemRequirementPatcher {
         Files.write(file, all);
     }
 
-    private static void log(Logger logger, String msg) {
+    static void log(Logger logger, String msg) {
         if (logger != null) logger.log("[" + Timestamps.now() + "] " + msg);
     }
 }

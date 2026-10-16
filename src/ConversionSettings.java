@@ -51,6 +51,12 @@ final class ConversionSettings {
      *  a Castle, otherwise apply). item.ini itself is never modified. Needs lib/ReforgedStockItemIds.txt. */
     boolean patchItemRequirements = true;
 
+    /** When true, and a map table folder is given, ability.ini is scanned for objects that inherit a
+     *  stock ability and set no Requires field; a copy with an empty Requires added is written to
+     *  ability_patched.ini next to ability.ini. ability.ini itself is never modified. Needs
+     *  lib/ReforgedStockAbilityIds.txt. */
+    boolean patchAbilityRequirements = true;
+
     /** When true, DestroyTimer call sites are rewritten to DzCompat_DestroyTimer, which
      *  null-checks and pauses before destroy. Prevents Reforged crashes from double-destroy
      *  of the same timer handle (callback + cleanup paths). On by default. */

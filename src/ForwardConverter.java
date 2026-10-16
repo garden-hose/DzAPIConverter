@@ -249,7 +249,7 @@ final class ForwardConverter {
                                        ModelPathRegistry.scriptUsesDzSetUnitModel(jassScript);
         Path slkTableDir = null;
         if (neededNames.contains("EXExecuteScript") || needsHotkeyTable || needsAbilityDataFieldRegistry 
-				|| needsUnitModelTable || settings.patchItemRequirements) {
+				|| needsUnitModelTable || settings.patchItemRequirements || settings.patchAbilityRequirements) {
             slkTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
         }
         if (neededNames.contains("EXExecuteScript") && slkTableDir == null) {
@@ -623,6 +623,26 @@ final class ForwardConverter {
                     }
                 } catch (IOException e) {
                     logger.log("[" + Timestamps.now() + "] WARNING: item requirements not patched: " + e.getMessage());
+                }
+            }
+        }
+
+        // Reforged: write ability_patched.ini (ability.ini + an empty Requires on stock-based
+        // abilities), same idea as the item patch above. ability.ini itself is never modified.
+        if (settings.patchAbilityRequirements) {
+            if (slkTableDir == null) {
+                logger.log("[" + Timestamps.now() + "] Ability requirements: skipped (no map table path)");
+            } else {
+                try {
+                    java.util.Set<String> stockAbilityIds = AbilityRequirementPatcher.loadStockIds(libDir);
+                    if (stockAbilityIds == null) {
+                        logger.log("[" + Timestamps.now() + "] WARNING: lib/" + AbilityRequirementPatcher.STOCK_IDS_FILE_NAME +
+                                   " not found - ability requirements not patched");
+                    } else {
+                        AbilityRequirementPatcher.patch(slkTableDir, stockAbilityIds, logger);
+                    }
+                } catch (IOException e) {
+                    logger.log("[" + Timestamps.now() + "] WARNING: ability requirements not patched: " + e.getMessage());
                 }
             }
         }
