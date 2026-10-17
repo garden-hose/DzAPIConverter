@@ -384,7 +384,7 @@ function DzAPI_Map_IsConnoisseur takes player whichPlayer returns boolean
 endfunction
 
 function DzAPI_Map_IsPlayer takes player whichPlayer returns boolean
-    return GetPlayerController(whichPlayer) == MAP_CONTROL_USER
+    return DzCompat_IsUserPlayer(whichPlayer)
 endfunction
 
 function GetPlayerServerValueSuccess takes player whichPlayer returns boolean

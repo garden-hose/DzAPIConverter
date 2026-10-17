@@ -48,6 +48,8 @@
         boolean gDzCompatDbgDone = false
         integer gDzCompatDbgLog = 0
         framehandle gDzCompatEdgeOwner = null
+        // [DESYNC FIX] counter for nameless frames (was GetRandomInt, which advances the shared RNG)
+        integer gDzCompatFrameGenCount = 0
 
         // (frame id, event id) -> the trigger DzFrameSetScriptByCode built for it.
         // DzAPI keeps ONE script per frame and event, so setting it again must replace
@@ -561,7 +563,8 @@
         local string plainType = frameType
         local integer fid
         if regName == null or regName == "" then
-            set regName = "__FrameGen_" + I2S(GetRandomInt(1, 100000))
+            set gDzCompatFrameGenCount = gDzCompatFrameGenCount + 1
+            set regName = "__FrameGen_" + I2S(gDzCompatFrameGenCount)
         endif
         if DZCOMPAT_BUTTON_AS_GLUE_BUTTON and frameType == "BUTTON" then
             set plainType = "GLUETEXTBUTTON"

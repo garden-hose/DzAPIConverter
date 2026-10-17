@@ -13,6 +13,8 @@ globals
     constant integer SILENCE_ABILITY_ID = 'ACsi'
     // DzGetSelectedLeaderUnit: one group made at map init on every client (see the function)
     group     gDzCompatSelectGroup = CreateGroup()
+    // [DESYNC FIX] one location made at map init for DzGetMouseTerrainZ (no per-call handle in local code)
+    location  gDzCompatTerrainZLoc = Location(0., 0.)
 endglobals
 
     function DzCompat_OnMouseMoveTrack takes nothing returns nothing
@@ -50,14 +52,11 @@ endglobals
 	// World Z under the local player's cursor. Built from the same tracked XY
     // as X/Y via GetLocationZ (no dedicated Blz terrain-Z-under-cursor native).
     function DzGetMouseTerrainZ takes nothing returns real
-        local location loc
-        local real z
         call DzCompat_EnsureMouseTracking()
-        set loc = Location(LoadReal(gDzCompatMouseTrack, GetPlayerId(GetLocalPlayer()), 0), LoadReal(gDzCompatMouseTrack, GetPlayerId(GetLocalPlayer()), 1))
-        set z = GetLocationZ(loc)
-        call RemoveLocation(loc)
-        set loc = null
-        return z
+        // GetLocalPlayer() (not GetTriggerPlayer) is kept on purpose: this value is local by definition.
+        // The result is async (GetLocationZ) - use it for display only, never for synced logic.
+        call MoveLocation(gDzCompatTerrainZLoc, LoadReal(gDzCompatMouseTrack, GetPlayerId(GetLocalPlayer()), 0), LoadReal(gDzCompatMouseTrack, GetPlayerId(GetLocalPlayer()), 1))
+        return GetLocationZ(gDzCompatTerrainZLoc)
     endfunction
 
     // ---- misc ------------------------------------------------------
@@ -649,36 +648,37 @@ endglobals
     // Index is 0-based (first selected unit = 0), matching BlzGroupUnitAt style.
     // Callers that treated KK's index as 1-based should subtract 1.
 
+    // [DESYNC FIX] These run in local code, so they must not create or destroy handles per call
+    // (a handle id allocated on one client only desyncs later ids). They share gDzCompatSelectGroup,
+    // made once at map init, exactly like DzGetSelectedLeaderUnit.
     function DzGetLocalSelectUnitCount takes nothing returns integer
-        local group g = CreateGroup()
         local integer n
-        call GroupEnumUnitsSelected(g, GetLocalPlayer(), null)
-        set n = CountUnitsInGroup(g)
-        call DestroyGroup(g)
-        set g = null
+        call GroupClear(gDzCompatSelectGroup)
+        call GroupEnumUnitsSelected(gDzCompatSelectGroup, GetLocalPlayer(), null)
+        set n = CountUnitsInGroup(gDzCompatSelectGroup)
+        call GroupClear(gDzCompatSelectGroup)
         return n
     endfunction
 
     function DzGetLocalSelectUnit takes integer index returns unit
-        local group g = CreateGroup()
         local unit u = null
+        local unit result = null
         local integer i = 0
-        call GroupEnumUnitsSelected(g, GetLocalPlayer(), null)
+        call GroupClear(gDzCompatSelectGroup)
+        call GroupEnumUnitsSelected(gDzCompatSelectGroup, GetLocalPlayer(), null)
         loop
-            set u = FirstOfGroup(g)
+            set u = FirstOfGroup(gDzCompatSelectGroup)
             exitwhen u == null
-            call GroupRemoveUnit(g, u)
+            call GroupRemoveUnit(gDzCompatSelectGroup, u)
             if i == index then
-                call DestroyGroup(g)
-                set g = null
-                return u
+                set result = u
+                exitwhen true
             endif
             set i = i + 1
         endloop
-        call DestroyGroup(g)
-        set g = null
+        call GroupClear(gDzCompatSelectGroup)
         set u = null
-        return null
+        return result
     endfunction
 
     // [APPROX] "Leader" of the local selection = first unit in the selection

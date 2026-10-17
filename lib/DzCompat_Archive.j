@@ -328,7 +328,7 @@ endfunction
 // "global" data, computer players) shares the store DZARCHIVE_SHARED.
 function DzCompat_Archive_StoreOf takes player p returns integer
     local integer pid = GetPlayerId(p)
-    if pid >= 0 and pid < DZARCHIVE_SHARED and GetPlayerController(p) == MAP_CONTROL_USER then
+    if pid >= 0 and pid < DZARCHIVE_SHARED and DzCompat_IsUserPlayer(p) then
         return pid
     endif
     return DZARCHIVE_SHARED
@@ -1041,6 +1041,10 @@ function DzCompat_Archive_EnsureLoaded takes nothing returns nothing
     if gDzArchiveFolder == "" then
         set gDzArchiveFolder = "DzCompat_Archive\\" + gDzArchiveMapName + "\\"
     endif
+    // [DESYNC FIX] The sync trigger must exist on EVERY client. It used to be created lazily inside
+    // Broadcast, which only runs on the store's owning client, so that client alone allocated a
+    // trigger handle and the others never registered "DzAr" (so they could not receive records).
+    call DzCompat_Archive_EnsureSync()
     set gDzArchiveClockTimer = CreateTimer()
     call TimerStart(gDzArchiveClockTimer, DZARCHIVE_TICK_SECONDS, true, function DzCompat_Archive_OnTick)
     // every timer of the writing is created and started here, on every client alike

@@ -16,7 +16,30 @@ globals
     // Diagnostics are silent by default: a warning is a message for the map author, and players
     // should not see it in the chat. Set to true in a test build to see them on screen.
     constant boolean DZCOMPAT_DEBUG_MESSAGES = false
+    // [DESYNC FIX] GetPlayerController results, cached per player (see DzCompat_IsUserPlayer)
+    boolean array gDzCompatCtlKnown
+    boolean array gDzCompatCtlUser
 endglobals
+
+// Is this player a human-controlled slot? A slot's controller does not change during a game, but
+// calling GetPlayerController over and over (every archive key operation used to) is on the Hive
+// list of low-probability desync causes (numerous "Player controller comparison"s). The native is
+// asked once per player and the answer is reused.
+function DzCompat_IsUserPlayer takes player p returns boolean
+    local integer pid
+    if p == null then
+        return false
+    endif
+    set pid = GetPlayerId(p)
+    if pid < 0 or pid >= bj_MAX_PLAYER_SLOTS then
+        return false
+    endif
+    if not gDzCompatCtlKnown[pid] then
+        set gDzCompatCtlUser[pid] = (GetPlayerController(p) == MAP_CONTROL_USER)
+        set gDzCompatCtlKnown[pid] = true
+    endif
+    return gDzCompatCtlUser[pid]
+endfunction
 
 // Shows a diagnostic message to the local player when DZCOMPAT_DEBUG_MESSAGES is true.
 function DzCompat_Warn takes string msg returns nothing
