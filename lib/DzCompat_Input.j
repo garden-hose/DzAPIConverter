@@ -73,6 +73,20 @@ endglobals
     // Key events - ByCode
     // ========================================================================
 
+    // The Dz client fires a key registration whatever modifiers are held: its WndProc hook does not test
+    // Shift/Ctrl/Alt at all (kkapi_local_plugin.dll 0x1007db70, WM_KEYDOWN/WM_KEYUP: key = wParam, no modifier
+    // filter, no repeat filter). BlzTriggerRegisterPlayerKeyEvent only matches the EXACT metaKey state, so
+    // registering metaKey 0 alone makes Shift+key, Ctrl+key and Alt+key silently dead. One press matches
+    // exactly one of the 8 Shift(1)/Ctrl(2)/Alt(4) combinations, so the action still runs once per press.
+    function DzCompat_RegisterKeyAnyMeta takes trigger trig, player whichPlayer, oskeytype key, boolean keyDown returns nothing
+        local integer meta = 0
+        loop
+            exitwhen meta > 7
+            call BlzTriggerRegisterPlayerKeyEvent(trig, whichPlayer, key, meta, keyDown)
+            set meta = meta + 1
+        endloop
+    endfunction
+
     // BlzTriggerRegisterPlayerKeyEvent
     // status: 1 = key down, 0 = key up (status==1 -> keyDown true)
     // sync: when true, register for every player so the event can be used in
@@ -82,18 +96,18 @@ endglobals
     // trigger is created for it then.
     function DzTriggerRegisterKeyEventByCode takes trigger trig, integer key, integer status, boolean sync, code funcHandle returns nothing
         local integer i = 0
-        local boolean keyDown = (status == 1)
+        local boolean keyDown = (status != 0) // the dll tests (status != 0), not == 1
         if trig == null then
             set trig = CreateTrigger()
         endif
         if sync then
             loop
                 exitwhen i >= bj_MAX_PLAYER_SLOTS
-                call BlzTriggerRegisterPlayerKeyEvent(trig, Player(i), ConvertOsKeyType(key), 0, keyDown)
+                call DzCompat_RegisterKeyAnyMeta(trig, Player(i), ConvertOsKeyType(key), keyDown)
                 set i = i + 1
             endloop
         else
-            call BlzTriggerRegisterPlayerKeyEvent(trig, GetLocalPlayer(), ConvertOsKeyType(key), 0, keyDown)
+            call DzCompat_RegisterKeyAnyMeta(trig, GetLocalPlayer(), ConvertOsKeyType(key), keyDown)
         endif
         call TriggerAddAction(trig, funcHandle)
     endfunction
@@ -148,7 +162,7 @@ endglobals
         // already networked).
         loop
             exitwhen i >= bj_MAX_PLAYER_SLOTS
-            call BlzTriggerRegisterPlayerKeyEvent(trig, Player(i), ConvertOsKeyType(key), 0, status != 0)
+            call DzCompat_RegisterKeyAnyMeta(trig, Player(i), ConvertOsKeyType(key), status != 0)
             set i = i + 1
         endloop
         call SaveInteger(gDzInputKeyReg, tid, count * 3, key)

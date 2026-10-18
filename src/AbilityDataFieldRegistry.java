@@ -50,6 +50,12 @@ final class AbilityDataFieldRegistry {
     }
 
     static boolean scriptMayNeedRegistry(Set<String> neededNames) {
+        for (String slot : new String[] {"A", "B", "C", "D", "E"}) {
+            if (neededNames.contains("DzSetUnitAbilityData" + slot)
+                    || neededNames.contains("DzGetUnitAbilityData" + slot)) {
+                return true;
+            }
+        }
         return neededNames.contains("EXGetAbilityDataReal") ||
                neededNames.contains("EXSetAbilityDataReal") ||
                neededNames.contains("EXGetAbilityDataInteger") ||

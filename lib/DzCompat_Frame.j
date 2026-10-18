@@ -982,6 +982,18 @@ endfunction
         return true
     endfunction
 
+    // kkapi.dll 0x10073720: only acts on edit-box frames; false calls the frame's "lose focus" method, true
+    // its "take focus" method. That is exactly BlzFrameSetFocus, so it goes through DzFrameSetFocus (which
+    // also keeps the DzFrameIsFocus bookkeeping).
+    function DzFrameSetEditBoxActive takes integer frame, boolean is_active returns nothing
+        call DzFrameSetFocus(frame, is_active)
+    endfunction
+
+    // kkapi.dll 0x10073770 only flips an input-method flag on the edit box (IME on/off). Reforged exposes no
+    // IME control, so there is nothing to port: accepted and ignored on purpose.
+    function DzFrameSetEditBoxDisableIme takes integer frame, boolean is_disable returns nothing
+    endfunction
+
     // alpha is clamped to 0..255, the range BlzFrameSetAlpha accepts.
     function DzFrameSetAlpha takes integer frame, integer alpha returns nothing
         local framehandle f = DzCompat_GetFrame(frame)

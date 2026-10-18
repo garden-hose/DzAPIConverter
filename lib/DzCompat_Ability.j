@@ -399,3 +399,70 @@
         endif
         call BlzUnitDisableAbility(owner, EXGetAbilityId(whichAbility), not enable, hideUI)
     endfunction
+
+    // ---- DzSet/GetUnitAbilityDataA..E -------------------------------------------------------------------
+    // kkapi.dll 0x10055780 / 0x1004c780: finds the unit's own instance of the ability and reads/writes the
+    // Data A..E value of the level that instance is AT (instance field +0x50), as a float. It returns false
+    // / 0.0 when the unit does not have the ability. Reforged equivalent: the same level field through
+    // BlzGet/SetAbility*LevelField, which DzCompat_YDWE_EX.j already resolves per ability (EXGet/SetAbilityData*,
+    // data types 108..112 = Data A..E). That path only writes the real field when AbilityDataFieldRegistry
+    // baked the ability's parent from ability.ini; otherwise the value is local bookkeeping (see there).
+    // [APPROX] the dll keeps the value as an override on the instance, this writes the level field, so only the
+    // current level changes and a later level-up reads that level's own table value.
+    function DzCompat_GetUnitAbilityData takes unit whichUnit, integer abil_code, integer slot returns real
+        local ability a = BlzGetUnitAbility(whichUnit, abil_code)
+        local integer lvl = GetUnitAbilityLevel(whichUnit, abil_code)
+        if a == null or lvl <= 0 then
+            return 0.0
+        endif
+        return EXGetAbilityDataReal(a, lvl, 108 + slot)
+    endfunction
+
+    function DzCompat_SetUnitAbilityData takes unit whichUnit, integer abil_code, integer slot, real value returns boolean
+        local ability a = BlzGetUnitAbility(whichUnit, abil_code)
+        local integer lvl = GetUnitAbilityLevel(whichUnit, abil_code)
+        if a == null or lvl <= 0 then
+            return false
+        endif
+        return EXSetAbilityDataReal(a, lvl, 108 + slot, value)
+    endfunction
+
+    function DzGetUnitAbilityDataA takes unit Unit, integer abil_code returns real
+        return DzCompat_GetUnitAbilityData(Unit, abil_code, 0)
+    endfunction
+
+    function DzSetUnitAbilityDataA takes unit Unit, integer abil_code, real value returns boolean
+        return DzCompat_SetUnitAbilityData(Unit, abil_code, 0, value)
+    endfunction
+
+    function DzGetUnitAbilityDataB takes unit Unit, integer abil_code returns real
+        return DzCompat_GetUnitAbilityData(Unit, abil_code, 1)
+    endfunction
+
+    function DzSetUnitAbilityDataB takes unit Unit, integer abil_code, real value returns boolean
+        return DzCompat_SetUnitAbilityData(Unit, abil_code, 1, value)
+    endfunction
+
+    function DzGetUnitAbilityDataC takes unit Unit, integer abil_code returns real
+        return DzCompat_GetUnitAbilityData(Unit, abil_code, 2)
+    endfunction
+
+    function DzSetUnitAbilityDataC takes unit Unit, integer abil_code, real value returns boolean
+        return DzCompat_SetUnitAbilityData(Unit, abil_code, 2, value)
+    endfunction
+
+    function DzGetUnitAbilityDataD takes unit Unit, integer abil_code returns real
+        return DzCompat_GetUnitAbilityData(Unit, abil_code, 3)
+    endfunction
+
+    function DzSetUnitAbilityDataD takes unit Unit, integer abil_code, real value returns boolean
+        return DzCompat_SetUnitAbilityData(Unit, abil_code, 3, value)
+    endfunction
+
+    function DzGetUnitAbilityDataE takes unit Unit, integer abil_code returns real
+        return DzCompat_GetUnitAbilityData(Unit, abil_code, 4)
+    endfunction
+
+    function DzSetUnitAbilityDataE takes unit Unit, integer abil_code, real value returns boolean
+        return DzCompat_SetUnitAbilityData(Unit, abil_code, 4, value)
+    endfunction

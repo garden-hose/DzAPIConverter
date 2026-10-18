@@ -30,66 +30,75 @@
         return BlzBitXor(i, -1)
     endfunction
 
-	// [IMPLEMENTED] shifts via arithmetic. JASS integers are 32-bit signed;
-	// left shift overflow behavior matches native bitwise shifting for
-	// shift amounts 0-31. Negative or >= 32 amounts are defined as no-ops
-	// (return the input unchanged) so a bad caller cannot infinite-loop.
-	function DzBitShiftLeft takes integer i, integer bitsToShift returns integer
-		local integer result = i
-		local integer n = 0
-		if bitsToShift <= 0 or bitsToShift >= 32 then
-			return i
-		endif
-		loop
-			exitwhen n == bitsToShift
-			set result = result * 2
-			set n = n + 1
-		endloop
-		return result
-	endfunction
+    // [IMPLEMENTED] shifts. The dll (kkapi_local_plugin.dll 0x10070630 / 0x10070640) takes the count
+    // modulo 32 ("n & 0x1f", so 32 -> 0 and 33 -> 1, never a no-op for >= 32), and DzBitShiftRight is
+    // a LOGICAL shift (the dll declares the value as uint): zero bits come in from the left, so
+    // DzBitShiftRight(-1, 1) == 2147483647 and DzBitShiftRight(-1, 24) == 255. A plain "/ 2" loop is an
+    // arithmetic shift that truncates toward zero and gets every negative input wrong (colors with
+    // alpha >= 128, hashes and packed bitfields are negative integers).
+    function DzBitShiftLeft takes integer i, integer bitsToShift returns integer
+        local integer n = BlzBitAnd(bitsToShift, 31)
+        local integer k = 0
+        loop
+            exitwhen k >= n
+            set i = i * 2 // JASS integers wrap on overflow, same as the C shift
+            set k = k + 1
+        endloop
+        return i
+    endfunction
 
-	function DzBitShiftRight takes integer i, integer bitsToShift returns integer
-		local integer result = i
-		local integer n = 0
-		if bitsToShift <= 0 or bitsToShift >= 32 then
-			return i
-		endif
-		loop
-			exitwhen n == bitsToShift
-			set result = result / 2
-			set n = n + 1
-		endloop
-		return result
-	endfunction
+    function DzBitShiftRight takes integer i, integer bitsToShift returns integer
+        local integer n = BlzBitAnd(bitsToShift, 31)
+        local integer k = 0
+        local integer sign = 1
+        if n == 0 then
+            return i
+        endif
+        if i < 0 then
+            // drop the sign bit, shift the 31 remaining bits, then put the sign bit back at bit (31 - n)
+            set i = BlzBitAnd(i, 0x7FFFFFFF)
+            set k = 31 - n
+            loop
+                exitwhen k <= 0
+                set sign = sign * 2
+                set k = k - 1
+            endloop
+        else
+            set sign = 0
+        endif
+        set k = 0
+        loop
+            exitwhen k >= n
+            set i = i / 2
+            set k = k + 1
+        endloop
+        return i + sign
+    endfunction
 
-    // [IMPLEMENTED] byteIndex 0-3, byte 0 = least significant.
+    // [IMPLEMENTED] byteIndex wraps modulo 4 (the dll computes "(byteIndex * 8) & 0x1f"), byte 0 = least
+    // significant. DzBitSetByte does NOT mask the value to 8 bits in the dll (0x10070600), so a value above
+    // 255 spills into the next byte, and that is kept here.
     function DzBitGetByte takes integer i, integer byteIndex returns integer
-        return DzBitAnd(DzBitShiftRight(i, byteIndex * 8), 255)
+        return DzBitAnd(DzBitShiftRight(i, BlzBitAnd(byteIndex, 3) * 8), 255)
     endfunction
 
     function DzBitSetByte takes integer i, integer byteIndex, integer byteValue returns integer
-        local integer mask = DzBitNot(DzBitShiftLeft(255, byteIndex * 8))
-        local integer cleared = DzBitAnd(i, mask)
-        return DzBitOr(cleared, DzBitShiftLeft(DzBitAnd(byteValue, 255), byteIndex * 8))
+        local integer shift = BlzBitAnd(byteIndex, 3) * 8
+        local integer mask = DzBitNot(DzBitShiftLeft(255, shift))
+        return DzBitOr(DzBitAnd(i, mask), DzBitShiftLeft(byteValue, shift))
     endfunction
 
-    // [IMPLEMENTED] single-bit get/set within a byte. byteIndex here follows
-    // Dz's own naming (it takes a byteIndex param but operates at bit
-    // granularity per the original signature) - if your actual usage treats
-    // this as a raw bit index 0-31 instead of "bit within byteIndex", tell me
-    // and I'll adjust; the original native's exact indexing convention isn't
-    // fully clear from the signature alone.
+    // [IMPLEMENTED] DzBitGet/DzBitSet work on a single BIT: the index is a bit number 0..31 taken modulo 32
+    // (dll 0x10070590 "(i >> (idx & 0x1f)) & 1"). DzBitSet (0x100705e0) is "(byte)value << idx | i & ~(1 << idx)":
+    // the value is a byte, not a flag, so only 0 and 1 are "normal" inputs; other values are or-ed in as-is.
     function DzBitGet takes integer i, integer byteIndex returns integer
         return DzBitAnd(DzBitShiftRight(i, byteIndex), 1)
     endfunction
 
     function DzBitSet takes integer i, integer byteIndex, integer byteValue returns integer
-        local integer mask = DzBitNot(DzBitShiftLeft(1, byteIndex))
-        local integer cleared = DzBitAnd(i, mask)
-        if byteValue != 0 then
-            return DzBitOr(cleared, DzBitShiftLeft(1, byteIndex))
-        endif
-        return cleared
+        local integer shift = BlzBitAnd(byteIndex, 31)
+        local integer mask = DzBitNot(DzBitShiftLeft(1, shift))
+        return DzBitOr(DzBitAnd(i, mask), DzBitShiftLeft(BlzBitAnd(byteValue, 255), shift))
     endfunction
 
     // [IMPLEMENTED] pack 4 bytes (b1 = least significant) into one integer.

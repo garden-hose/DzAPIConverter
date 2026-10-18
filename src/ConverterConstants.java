@@ -30,7 +30,7 @@ final class ConverterConstants {
         "DzSimpleFontStringFindByName", "DzSimpleTextureFindByName", "KKSimpleFrameIsVisible",
         "DzFrameGetChildrenCount", "DzFrameGetChild", "DzFrameGetWidth", "DzFrameGetRealWidth",
         "DzFrameGetRealHeight", "DzGetClientWidth", "DzGetClientHeight", "DzFrameSetCheckBoxState",
-        "DzFrameGetCheckBoxState", "DzFrameSetNameContext", "DzFrameGetContext", "DzFrameIsFocus",
+        "DzFrameGetCheckBoxState", "DzFrameSetNameContext", "DzFrameGetContext", "DzFrameIsFocus", "DzFrameSetEditBoxActive", "DzFrameSetEditBoxDisableIme",
         // DzCompat_Frame.j - origin-frame sub-handle lookups (BlzGetOriginFrame)
         "DzFrameGetCommandBarButton", "DzFrameGetHeroBarButton", "DzFrameGetHeroHPBar",
         "DzFrameGetHeroManaBar", "DzFrameGetItemBarButton", "DzFrameGetMinimap",
@@ -78,6 +78,7 @@ final class ConverterConstants {
         "DzTextTagSetStartAlpha", "DzTextTagSetShadowColor", "DzTextTagGetShadowColor",
         "DzTextTagSetFont", "DzTextTagGetFont",
         "DzUnitHasAbility",
+        "DzGetUnitAbilityDataA", "DzSetUnitAbilityDataA", "DzGetUnitAbilityDataB", "DzSetUnitAbilityDataB", "DzGetUnitAbilityDataC", "DzSetUnitAbilityDataC", "DzGetUnitAbilityDataD", "DzSetUnitAbilityDataD", "DzGetUnitAbilityDataE", "DzSetUnitAbilityDataE",
         "DzSetUnitAbilityRange", "DzGetUnitAbilityRange",
         "DzSetUnitAbilityArea", "DzGetUnitAbilityArea",
         "DzSetUnitAbilityCool", "DzGetUnitAbilityCool",
