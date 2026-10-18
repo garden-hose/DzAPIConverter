@@ -1,0 +1,360 @@
+String "SimpleInfoPanelTextTemplate" {
+    FontJustificationH JUSTIFYLEFT,
+    FontJustificationV JUSTIFYTOP,
+    FontColor 0.99 0.827 0.0705 1.0,
+	FontShadowColor 0.0 0.0 0.0 0.9,
+    FontShadowOffset 0.001 -0.001,
+	Font "InfoPanelTextFont",0.006,
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsPanel" {
+    UseActiveContext,
+	DecorateFileNames,
+	Width 0.14,
+	Height 0.1204,
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsItem" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,  
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsItem", LEFT, 0.012, 0.0,
+        Text "",
+        Height 0.007525,
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsItem", RIGHT, 0.0, 0.0,
+        Text "",
+        Height 0.007525,
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsHealthRegen"
+{
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsHealthRegen", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsHealthRegen", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsManaRegen" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsManaRegen", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsManaRegen", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsAttackSpeed" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsAttackSpeed", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsAttackSpeed", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsCriticalChance" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsCriticalChance", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsCriticalChance", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsCriticalDamage" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsCriticalDamage", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsCriticalDamage", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsSpellCriticalChance" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsSpellCriticalChance", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsSpellCriticalChance", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsSpellCriticalDamage" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsSpellCriticalDamage", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsSpellCriticalDamage", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsAbilitySpeedFlat" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsAbilitySpeedFlat", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsAbilitySpeedFlat", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsAbilitySpeedPercentage" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsAbilitySpeedPercentage", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsAbilitySpeedPercentage", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsAbilityAmpFlat" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsAbilityAmpFlat", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsAbilityAmpFlat", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsAbilityAmpPercentage" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsAbilityAmpPercentage", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsAbilityAmpPercentage", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsLifesteal" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsLifesteal", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsLifesteal", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsAbilityVampFlat" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsAbilityVampFlat", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsAbilityVampFlat", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsAbilityVampPercentage" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsAbilityVampPercentage", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsAbilityVampPercentage", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsResolveFlat" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsResolveFlat", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsResolveFlat", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsResolvePercentage" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsResolvePercentage", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsResolvePercentage", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}
+
+Frame "SIMPLEFRAME" "SimpleStatDetailsMagicResistance" {
+    UseActiveContext,
+    DecorateFileNames,
+    Height 0.007525,
+	Width 0.14,
+
+    String "SimpleStatDetailsItemLabel" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint LEFT, "SimpleStatDetailsMagicResistance", LEFT, 0.012, 0.0,
+        Text "",
+        Width 0.1,
+    }
+
+    String "SimpleStatDetailsItemValue" INHERITS "SimpleInfoPanelTextTemplate" {
+        SetPoint RIGHT, "SimpleStatDetailsMagicResistance", RIGHT, 0.0, 0.0,
+        Text "",
+        Width 0.025,
+    }
+}

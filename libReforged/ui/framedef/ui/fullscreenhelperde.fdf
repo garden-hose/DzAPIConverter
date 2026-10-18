@@ -1,0 +1,13 @@
+// -- INCLUDE FILES ---------------------------------------------------------
+
+IncludeFile "UI\FrameDef\UI\EscMenuTemplates.fdf",
+
+// -- LOCAL TEMPLATES -------------------------------------------------------
+
+// -- FRAMES ----------------------------------------------------------------
+
+Frame "BACKDROP" "FullScreenHelperDE" {
+    SetAllPoints,
+    BackdropTileBackground,
+    BackdropBackground  "Textures\Black32.blp",
+}
