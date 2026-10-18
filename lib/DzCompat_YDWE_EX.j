@@ -158,8 +158,11 @@
     // point to the same thing. Verify in-game with a toggle ability if you
     // depend on this; if it turns out backwards, swap UNTIP/UNUBERTIP/UNART to
     // use the base Tooltip/ExtendedTooltip/Icon natives instead and vice versa.
-    // [PORT LIMITATION] everything else (hotkeys, the per-slot art fields,
-    // lightning effect) - no by-id native found for these.
+    // [PORT LIMITATION] everything else (hotkeys) - no by-id native found for these.
+    // The per-slot art fields and the lightning effect (205-211) have no by-id native
+    // either, but they are real for an ability INSTANCE: see DzCompat_AbilityArtField
+    // and EXGet/SetAbilityDataString below. The by-id functions (EXGet/SetAbilityString)
+    // still keep these as local bookkeeping only, since there is no instance to read.
     // [FIXED] level indexing: level is 1-based (Dz/GUI convention, same as every
     // sibling function in this file - see idx = level - 1 in EXGetAbilityDataReal
     // etc. above), but these Blz tooltip/icon natives take a 0-based level field,
@@ -759,12 +762,56 @@
         return true
     endfunction
 
+    // ---- [REAL] per-slot art fields / lightning effect, via the ability instance ----
+    // TARGET_ART 205, CASTER_ART 206, EFFECT_ART 207, AREAEFFECT_ART 208, MISSILE_ART 209,
+    // SPECIAL_ART 210, LIGHTNING_EFFECT 211 -> the matching leveled string field.
+    // null = not one of these data types.
+    function DzCompat_AbilityArtField takes integer data_type returns abilitystringlevelfield
+        if data_type == 205 then //ABILITY_DATA_TARGET_ART
+            return ABILITY_SLF_TARGET
+        elseif data_type == 206 then //ABILITY_DATA_CASTER_ART
+            return ABILITY_SLF_CASTER
+        elseif data_type == 207 then //ABILITY_DATA_EFFECT_ART
+            return ABILITY_SLF_EFFECT
+        elseif data_type == 208 then //ABILITY_DATA_AREAEFFECT_ART
+            return ABILITY_SLF_AREA_EFFECT
+        elseif data_type == 209 then //ABILITY_DATA_MISSILE_ART
+            return ABILITY_SLF_MISSILE_ART
+        elseif data_type == 210 then //ABILITY_DATA_SPECIAL_ART
+            return ABILITY_SLF_SPECIAL
+        elseif data_type == 211 then //ABILITY_DATA_LIGHTNING_EFFECT
+            return ABILITY_SLF_LIGHTNING_EFFECTS
+        endif
+        return null
+    endfunction
+
     // ---- see YDWEEX_Get/SetAbilityStringByCode above for status per field -----
+    // The art fields (205-211) are handled here, on the instance; everything else goes
+    // through the by-code functions. level is 1-based, the Blz level fields 0-based.
     function EXGetAbilityDataString takes ability abil, integer level, integer data_type returns string
+        local integer idx = level - 1
+        local abilitystringlevelfield artField = DzCompat_AbilityArtField(data_type)
+        if idx < 0 then
+            set idx = 0
+        endif
+        if abil != null and artField != null then
+            return BlzGetAbilityStringLevelField(abil, artField, idx)
+        endif
         return YDWEEX_GetAbilityStringByCode(YDWEEX_GetAbilityCode(abil), level, data_type)
     endfunction
 
     function EXSetAbilityDataString takes ability abil, integer level, integer data_type, string value returns boolean
+        local integer idx = level - 1
+        local abilitystringlevelfield artField = DzCompat_AbilityArtField(data_type)
+        if idx < 0 then
+            set idx = 0
+        endif
+        if abil != null and artField != null then
+            if value == null then
+                set value = ""
+            endif
+            return BlzSetAbilityStringLevelField(abil, artField, idx, value)
+        endif
         return YDWEEX_SetAbilityStringByCode(YDWEEX_GetAbilityCode(abil), level, data_type, value)
     endfunction
 
