@@ -20,7 +20,8 @@
 - GetMapLevel - Returns a number for Map Level calls
 - GetGuildName - Returns a string for Guild Name calls
 - Convert - Runs the conversion process
-- Reverse Functions - Returns converted "function"(s) back to "native"(s)
+- Reverse Functions - Undoes a conversion: removes everything the converter injected, puts every native declaration back exactly as it was and turns the rewritten call sites (DestroyTimer, extended GetUnitState/SetUnitState, RequestExtra*, renamed globals) back into the original calls. This relies on the `//DZCOMPAT:` comment lines the converter writes into its output - do not delete or edit them. Scripts converted by an older version have no such lines and are reversed through lib/KKAPI.txt only (declared natives and the RequestExtra rename). Not restorable: declarations Reforged already provides, natives removed by "Clear unused natives", the "return bug" rewrites and comment lines
+- Converting a script that already contains `//DZCOMPAT:` blocks writes it out unchanged; use Reverse Functions first to convert it again with other settings
 - Clear unused natives - Removes natives that are declared but never used
 - Remove indentation - Self-explanatory
 - Remove local save - Stubs out the archive save system natives (SaveServerValue, GetServerValue, Store*/GetStored*, ...). Nothing is saved and no file is written to your system. Off by default

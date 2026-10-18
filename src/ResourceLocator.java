@@ -2,18 +2,27 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Finds the lib/ directory and KKAPI.txt relative to the running application. */
 final class ResourceLocator {
 
     private ResourceLocator() {}
 
+    /** The jar (or class directory) the application runs from, or null when it cannot be told. */
+    private static Path codeLocation() {
+        try {
+            return Paths.get(ResourceLocator.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     static Path resolveLibDir() throws IOException {
         // 1) lib/ next to the running JAR / class directory
-        try {
-            Path codePath = Paths.get(
-                ResourceLocator.class.getProtectionDomain()
-                    .getCodeSource().getLocation().toURI());
+        Path codePath = codeLocation();
+        if (codePath != null) {
             Path candidate;
             if (Files.isRegularFile(codePath)) {
                 // running from a JAR
@@ -21,59 +30,56 @@ final class ResourceLocator {
             } else {
                 // running from classes/ or src/
                 candidate = codePath.resolveSibling("lib");
-                if (!Files.isDirectory(candidate)) {
+                if (!Files.isDirectory(candidate) && codePath.getParent() != null) {
                     candidate = codePath.getParent().resolve("lib");
                 }
             }
             if (Files.isDirectory(candidate)) return candidate;
-        } catch (Exception ignored) {}
+        }
 
         // 2) lib/ relative to current working directory
         Path cwdLib = Paths.get("lib");
         if (Files.isDirectory(cwdLib)) return cwdLib;
 
-        // 3) Fall back to looking next to the source tree we know about
-        Path known = Paths.get("/home/workdir/artifacts/DzApiConverter/lib");
-        if (Files.isDirectory(known)) return known;
-
         throw new IOException("Cannot locate lib/ directory containing the DzCompat_*.j files.");
     }
 
+    /**
+     * KKAPI.txt ships inside lib/, so lib/ is searched first; the folder the app runs from and
+     * the working directory (with or without a lib/ subfolder) are accepted as well.
+     */
     static Path resolveKkapiPath() throws IOException {
-        // 1) KKAPI.txt next to the running JAR / class directory
+        List<Path> candidates = new ArrayList<>();
+
         try {
-            Path codePath = Paths.get(
-                ResourceLocator.class.getProtectionDomain()
-                    .getCodeSource().getLocation().toURI());
-            Path candidate;
-            if (Files.isRegularFile(codePath)) {
-                candidate = codePath.getParent().resolve("KKAPI.txt");
-            } else {
-                candidate = codePath.resolveSibling("KKAPI.txt");
-                if (!Files.isRegularFile(candidate)) {
-                    candidate = codePath.getParent().resolve("KKAPI.txt");
+            candidates.add(resolveLibDir().resolve("KKAPI.txt"));
+        } catch (IOException ignored) {
+            // no lib/ found: the other locations below may still hold the file
+        }
+
+        Path codePath = codeLocation();
+        if (codePath != null) {
+            Path base = Files.isRegularFile(codePath) ? codePath.getParent() : codePath;
+            if (base != null) {
+                candidates.add(base.resolve("KKAPI.txt"));
+                candidates.add(base.resolve("lib").resolve("KKAPI.txt"));
+                if (base.getParent() != null) {
+                    candidates.add(base.getParent().resolve("KKAPI.txt"));
+                    candidates.add(base.getParent().resolve("lib").resolve("KKAPI.txt"));
                 }
             }
-            if (Files.isRegularFile(candidate)) return candidate;
-        } catch (Exception ignored) {}
+        }
 
-        // 2) cwd
-        Path cwd = Paths.get("KKAPI.txt");
-        if (Files.isRegularFile(cwd)) return cwd;
+        candidates.add(Paths.get("KKAPI.txt"));
+        candidates.add(Paths.get("lib", "KKAPI.txt"));
 
-        // 3) Known project locations
-        for (String p : new String[]{
-            "/home/workdir/artifacts/DzApiConverter/KKAPI.txt",
-            "/home/workdir/attachments/KKAPI.txt",
-            "lib/../KKAPI.txt"
-        }) {
-            Path known = Paths.get(p);
-            if (Files.isRegularFile(known)) return known;
+        for (Path p : candidates) {
+            if (Files.isRegularFile(p)) return p;
         }
 
         throw new IOException(
-            "Cannot locate KKAPI.txt (needed for Reverse Natives).\n" +
-            "Place KKAPI.txt in the working directory of the app, or in the lib folder."
+            "Cannot locate KKAPI.txt (needed to reverse a script made by an older version of this tool).\n" +
+            "It normally sits in the lib folder next to the app; place it there, or in the app's folder."
         );
     }
 }

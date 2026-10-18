@@ -87,6 +87,12 @@ final class TextFileReader {
 
         bestText = bestText.replace("\r\n", "\n").replace('\r', '\n');
         List<String> lines = new ArrayList<>(Arrays.asList(bestText.split("\n", -1)));
+        // split() leaves an empty last element when the file ends with a newline, and
+        // Files.write adds a newline after every element - without this each conversion would
+        // append one more blank line to the script.
+        if (lines.size() > 1 && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
         return new DecodedText(lines, bestCs);
     }
 

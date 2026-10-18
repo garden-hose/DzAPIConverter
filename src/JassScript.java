@@ -9,7 +9,7 @@ final class JassScript {
     private JassScript() {}
 
     static boolean isNativeLine(String line) {
-        return line.matches("^\\s*native\\b.*");
+        return line.matches("^\\s*(?:constant\\s+)?native\\b.*");
     }
 
     private static final Pattern NATIVE_NAME = Pattern.compile("native\\s+(\\w+)\\s+takes");
@@ -20,11 +20,14 @@ final class JassScript {
     }
 
     /** Returns a copy of {@code lines} without any line that starts with a // comment
-     *  (leading whitespace ignored). Trailing comments after code are left untouched. */
+     *  (leading whitespace ignored), except the DzMarkers lines. Trailing comments after
+     *  code are left untouched. */
     static List<String> stripCommentLines(List<String> lines) {
         List<String> filtered = new ArrayList<>(lines.size());
         for (String line : lines) {
-            if (line.trim().startsWith("//")) continue;
+            String t = line.trim();
+            // DzMarkers lines are comments only to the compiler; the reverse converter needs them.
+            if (t.startsWith("//") && !t.startsWith(DzMarkers.PREFIX)) continue;
             filtered.add(line);
         }
         return filtered;
@@ -72,7 +75,8 @@ final class JassScript {
                 while (at < lines.size() && lines.get(at).trim().startsWith("local ")) {
                     at++;
                 }
-                lines.add(at, "    " + statement);
+                // The trailing marker lets the reverse converter find and drop the injected line.
+                lines.add(at, "    " + statement + " " + DzMarkers.INJECTED);
                 return true;
             }
         }

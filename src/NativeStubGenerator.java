@@ -39,7 +39,9 @@ final class NativeStubGenerator {
         String code = JassText.codeOnly(line).replaceAll("\\s+$", "");
         Matcher rt = RETURN_TYPE.matcher(code);
         String returnType = rt.find() ? rt.group(1) : "nothing";
-        String line1 = code.replaceFirst("native", "function");
+        // "constant native X" becomes a plain "function X": a constant function would be
+        // needlessly restrictive and the keyword is meaningless for a stub.
+        String line1 = code.replaceFirst("^(\\s*)(?:constant\\s+)?native\\b", "$1function");
 
         String line2 = neutralReturn(returnType);
 

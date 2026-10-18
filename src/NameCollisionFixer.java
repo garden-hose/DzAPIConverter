@@ -142,6 +142,14 @@ final class NameCollisionFixer {
 
     /** Replaces whole identifiers outside string literals and // comments. */
     static String renameIdentifiers(String line, Map<String, String> renames) {
+        return renameIdentifiers(line, (java.util.function.UnaryOperator<String>) renames::get);
+    }
+
+    /**
+     * Replaces whole identifiers outside string literals and // comments with whatever
+     * {@code rename} returns for them (null keeps the identifier as it is).
+     */
+    static String renameIdentifiers(String line, java.util.function.UnaryOperator<String> rename) {
         StringBuilder sb = new StringBuilder(line.length() + 16);
         boolean inString = false;
         int n = line.length();
@@ -168,7 +176,7 @@ final class NameCollisionFixer {
                 int j = i;
                 while (j < n && (Character.isLetterOrDigit(line.charAt(j)) || line.charAt(j) == '_')) j++;
                 String token = line.substring(i, j);
-                String replacement = renames.get(token);
+                String replacement = rename.apply(token);
                 sb.append(replacement != null ? replacement : token);
                 i = j;
             } else {

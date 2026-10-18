@@ -8,6 +8,9 @@ globals
     hashtable gDzCompatUnitDataCache = InitHashtable()
     hashtable gDzCompatEffectTimers = InitHashtable()
     hashtable gDzCompatEffectHidden = InitHashtable()
+    // Last alpha (child key 0) and RGB (child key 1) written through DzSetEffectVertexAlpha/Color,
+    // per effect handle id. Reforged has no getter for either, so the getters read this back.
+    hashtable gDzCompatEffectVertex = InitHashtable()
     hashtable gDzCompatMouseTrack = InitHashtable()
     boolean   gDzCompatMouseTrackReady = false
     constant integer SILENCE_ABILITY_ID = 'ACsi'
@@ -379,6 +382,9 @@ endglobals
     // ---- effect alpha -----------------------------------------------------
     function DzSetEffectVertexAlpha takes effect whichEffect, integer alpha returns nothing
         call BlzSetSpecialEffectAlpha(whichEffect, alpha)
+        if whichEffect != null then
+            call SaveInteger(gDzCompatEffectVertex, GetHandleId(whichEffect), 0, alpha)
+        endif
     endfunction
 
     // ---- effect color, unpacked from Dz's single packed integer ---------
@@ -420,6 +426,53 @@ endglobals
         set blue = rest - red * 65536 - green * 256
         call BlzSetSpecialEffectColor(whichEffect, red, green, blue)
         call BlzSetSpecialEffectAlpha(whichEffect, DzCompat_ColorAlpha(color))
+        call SaveInteger(gDzCompatEffectVertex, GetHandleId(whichEffect), 0, DzCompat_ColorAlpha(color))
+        call SaveInteger(gDzCompatEffectVertex, GetHandleId(whichEffect), 1, rest)
+    endfunction
+
+    // ---- [APPROX] effect alpha / color getters --------------------------------
+    // Reforged has no getter for an effect's alpha or color, so these return the last value
+    // written through DzSetEffectVertexAlpha / DzSetEffectVertexColor. An effect never touched
+    // through those reads as opaque white (alpha 255, 0xFFFFFFFF); a color or alpha set directly
+    // with BlzSetSpecialEffectColor/Alpha is not seen. The packed color uses the same signed ARGB
+    // layout as the setter (alpha >= 128 gives a negative integer).
+    function DzGetEffectVertexAlpha takes effect whichEffect returns integer
+        local integer h
+        if whichEffect == null then
+            return 0
+        endif
+        set h = GetHandleId(whichEffect)
+        if HaveSavedInteger(gDzCompatEffectVertex, h, 0) then
+            return LoadInteger(gDzCompatEffectVertex, h, 0)
+        endif
+        return 255
+    endfunction
+
+    function DzGetEffectVertexColor takes effect whichEffect returns integer
+        local integer h
+        local integer alpha
+        local integer rgb = 16777215
+        if whichEffect == null then
+            return 0
+        endif
+        set h = GetHandleId(whichEffect)
+        set alpha = DzGetEffectVertexAlpha(whichEffect)
+        if HaveSavedInteger(gDzCompatEffectVertex, h, 1) then
+            set rgb = LoadInteger(gDzCompatEffectVertex, h, 1)
+        endif
+        if alpha >= 128 then
+            return (alpha - 256) * 16777216 + rgb
+        endif
+        return alpha * 16777216 + rgb
+    endfunction
+
+    // ---- effect team color --------------------------------------------------
+    // playerId is the 0-based player index, like Player(). Out-of-range ids are ignored.
+    function DzSetEffectTeamColor takes effect whichHandle, integer playerId returns nothing
+        if whichHandle == null or playerId < 0 or playerId >= bj_MAX_PLAYER_SLOTS then
+            return
+        endif
+        call BlzSetSpecialEffectColorByPlayer(whichHandle, Player(playerId))
     endfunction
 
     // ---- [FIXED] revive unit ----------------------------------------------------
@@ -489,6 +542,9 @@ endglobals
 
     // ---- immediate effect removal ---------------------------------------
     function DzRemoveEffect takes effect whichEffect returns boolean
+        if whichEffect != null then
+            call FlushChildHashtable(gDzCompatEffectVertex, GetHandleId(whichEffect))
+        endif
         call DestroyEffect(whichEffect)
         return true
     endfunction
@@ -505,6 +561,9 @@ endglobals
     function DzCompat_OnEffectTimerExpire takes nothing returns nothing
         local timer t = GetExpiredTimer()
         local integer id = GetHandleId(t)
+        if LoadEffectHandle(gDzCompatEffectTimers, id, 0) != null then
+            call FlushChildHashtable(gDzCompatEffectVertex, GetHandleId(LoadEffectHandle(gDzCompatEffectTimers, id, 0)))
+        endif
         call DestroyEffect(LoadEffectHandle(gDzCompatEffectTimers, id, 0))
         call FlushChildHashtable(gDzCompatEffectTimers, id)
         call PauseTimer(t)

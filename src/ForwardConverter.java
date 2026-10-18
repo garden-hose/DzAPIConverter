@@ -63,6 +63,15 @@ final class ForwardConverter {
             throw new IOException("Input file is empty: " + inputPath);
         }
 
+        // Converting a script that was already converted would inject everything a second time.
+        // Hand it back unchanged instead, so converting is idempotent; Reverse undoes a conversion.
+        if (DzMarkers.isConverted(jassScript)) {
+            Files.write(Paths.get(outputPath), jassScript, inputCharset);
+            logger.log("[" + Timestamps.now() + "] This script has already been converted (DZCOMPAT markers found): " +
+                       "written out unchanged. Use Reverse Functions first to convert it again with other settings.");
+            return;
+        }
+
         // Sanity check: a real JASS script almost always has "globals" or "native " or "function "
         boolean looksLikeJass = false;
         for (String line : jassScript) {
@@ -118,11 +127,13 @@ final class ForwardConverter {
             }
         }
 
-        // RequestExtra*Data rename
-        for (String[] pair : ConverterConstants.RENAME_PAIRS) {
-            for (int i = 0; i < jassScript.size(); i++) {
-                jassScript.set(i, jassScript.get(i).replace(pair[0], pair[1]));
-            }
+        // RequestExtra*Data rename. Whole identifiers outside string literals and comments only:
+        // a plain substring replace also rewrote text inside strings and, run a second time,
+        // turned RequestExtraIntegerDataa into RequestExtraIntegerDataaa.
+        for (int i = 0; i < jassScript.size(); i++) {
+            String l = jassScript.get(i);
+            if (l.indexOf("RequestExtra") < 0) continue;
+            jassScript.set(i, NameCollisionFixer.renameIdentifiers(l, ConverterConstants.REQUEST_EXTRA_RENAMES));
         }
 
         // "Return bug" typecast functions (//# +nosemanticerror): Reforged 3.0 does not know the
@@ -480,11 +491,17 @@ final class ForwardConverter {
             if (i == firstEndGlobals) {
                 // Insert needed globals before endglobals, then all real
                 // implementations (helpers + former natives) after, in lib order.
+                int globalsMarkAt = finalOutput.size();
                 for (String gName : neededGlobals) {
                     String decl = allGlobals.get(gName);
                     if (decl != null) finalOutput.add(decl);
                 }
+                if (finalOutput.size() > globalsMarkAt) {
+                    finalOutput.add(globalsMarkAt, DzMarkers.BLOCK + "globals");
+                    finalOutput.add(DzMarkers.END);
+                }
                 finalOutput.add(line);
+                finalOutput.add(DzMarkers.BLOCK + "implementations");
                 finalOutput.add("");
                 finalOutput.addAll(orderedImplLines);
                 // DzCompat_InitModelPaths goes here, after the implementations
@@ -511,6 +528,7 @@ final class ForwardConverter {
                     finalOutput.add("");
                     finalOutput.addAll(abilityDataFieldLines);
                 }
+                finalOutput.add(DzMarkers.END);
                 continue;
             }
 
@@ -519,13 +537,15 @@ final class ForwardConverter {
                 if (name != null && neededNames.contains(name) && segmentByName.containsKey(name)) {
                     // Real body already emitted after endglobals in lib order —
                     // skip the original native line so it is not duplicated
-                    // and so definition order cannot be inverted.
+                    // and so definition order cannot be inverted. A marker keeps the original
+                    // declaration so Reverse can put it back where it was.
+                    finalOutput.add(DzMarkers.NATIVE + line);
                     continue;
                 } else {
                     stubCount++;
                     if (name != null && localSaveStubbed.contains(name)) {
                         // Stubbed on purpose by "Remove local save" - not a missing implementation.
-                        finalOutput.addAll(stubGenerator.convert(line));
+                        addStub(finalOutput, line);
                         continue;
                     }
                     if (name != null) {
@@ -533,7 +553,7 @@ final class ForwardConverter {
                     } else {
                         unknownNatives.add(line.trim());
                     }
-                    finalOutput.addAll(stubGenerator.convert(line));
+                    addStub(finalOutput, line);
                 }
                 continue;
             }
@@ -701,6 +721,13 @@ final class ForwardConverter {
                 }
             }
         }
+    }
+
+    /** Emits the stub for one native declaration, framed by markers that carry the original line. */
+    private void addStub(List<String> out, String nativeLine) {
+        out.add(DzMarkers.STUB + nativeLine);
+        out.addAll(stubGenerator.convert(nativeLine));
+        out.add(DzMarkers.END);
     }
 
     /** With "Remove local save" on: the empty replacement for one of the archive's entry points,

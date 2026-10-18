@@ -17,6 +17,8 @@
 
     globals
         hashtable gDzCompatAbilityStringData = InitHashtable()
+        // Per unit handle id and ability code: how many DzSetUnitAbilityDisable calls are still unmatched.
+        hashtable gDzCompatAbilityDisableCount = InitHashtable()
     endglobals
 
     function DzCompat_GetAbilityLevelIndex takes unit whichUnit, integer abilId returns integer
@@ -89,6 +91,16 @@
         return BlzGetAbilityRealLevelField(a, ABILITY_RLF_COOLDOWN, DzCompat_GetAbilityLevelIndex(whichUnit, abil_code))
     endfunction
 
+    // [APPROX] The configured (base) cooldown of the unit's current ability level - the same field
+    // DzGetUnitAbilityCool reads in this library.
+    function DzGetUnitAbilityMaxCool takes unit whichUnit, integer abil_code returns real
+        local ability a = BlzGetUnitAbility(whichUnit, abil_code)
+        if a == null then
+            return 0.0
+        endif
+        return BlzGetAbilityRealLevelField(a, ABILITY_RLF_COOLDOWN, DzCompat_GetAbilityLevelIndex(whichUnit, abil_code))
+    endfunction
+
     function DzSetUnitAbilityCost takes unit whichUnit, integer abil_code, integer value returns boolean
         local ability a = BlzGetUnitAbility(whichUnit, abil_code)
         if a == null then
@@ -139,14 +151,46 @@
 
     // ---- [APPROX] generic enable/disable (unit+abilcode form) ----------------
     // Balanced enable/disable calls applies.
+    // Disables are counted (DzGetUnitAbilityDisabledCount): the ability only comes back once every
+    // Disable has been matched by an Enable. An Enable with nothing outstanding still enables it.
     function DzSetUnitAbilityEnable takes unit u, integer abil_id returns boolean
-        call BlzUnitDisableAbility(u, abil_id, false, false)
+        local integer h
+        local integer n
+        if u == null then
+            return false
+        endif
+        set h = GetHandleId(u)
+        set n = LoadInteger(gDzCompatAbilityDisableCount, h, abil_id)
+        if n > 0 then
+            set n = n - 1
+            call SaveInteger(gDzCompatAbilityDisableCount, h, abil_id, n)
+        endif
+        if n == 0 then
+            call BlzUnitDisableAbility(u, abil_id, false, false)
+        endif
         return true
     endfunction
 
     function DzSetUnitAbilityDisable takes unit u, integer abil_id returns boolean
+        local integer h
+        if u == null then
+            return false
+        endif
+        set h = GetHandleId(u)
+        call SaveInteger(gDzCompatAbilityDisableCount, h, abil_id, LoadInteger(gDzCompatAbilityDisableCount, h, abil_id) + 1)
         call BlzUnitDisableAbility(u, abil_id, true, false)
         return true
+    endfunction
+
+    function DzGetUnitAbilityDisabledCount takes unit u, integer abil_id returns integer
+        if u == null then
+            return 0
+        endif
+        return LoadInteger(gDzCompatAbilityDisableCount, GetHandleId(u), abil_id)
+    endfunction
+
+    function DzGetUnitAbilityIsDisabled takes unit u, integer abil_id returns boolean
+        return DzGetUnitAbilityDisabledCount(u, abil_id) > 0
     endfunction
 
     // ============================================================================

@@ -50,6 +50,7 @@ final class ConverterConstants {
         "DzSetUnitProperName", "DzWidgetSetMinimapIcon",
         "DzSetEffectPos", "DzSetEffectScale", "DzSetEffectVertexAlpha", "DzSetEffectVertexColor",
         "DzPlayEffectAnimation", "DzSetEffectVisible",
+        "DzGetEffectVertexAlpha", "DzGetEffectVertexColor", "DzSetEffectTeamColor",
         "DzReviveUnit", "DzSetUnitDataCacheInteger",
         "DzUnitOrdersClear", "DzUnitOrdersCount", "DzUnitOrdersForceStop",
         "DzGroupGetCount", "DzGroupGetUnitAt", "DzRemoveEffect", "DzRemoveEffectTimed", "DzDieEffectTimed",
@@ -94,6 +95,7 @@ final class ConverterConstants {
         "DzSetUnitAbilityHeroDuration", "DzGetUnitAbilityHeroDuration",
         "DzSetUnitAbilityArt", "DzGetUnitAbilityArt", "DzSetUnitAbilityButtonPos", "DzAbilitySetStringData",
         "DzAbilitySetEnable",
+        "DzGetUnitAbilityIsDisabled", "DzGetUnitAbilityDisabledCount", "DzGetUnitAbilityMaxCool",
         // DzCompat_StringBit.j
         "DzBitAnd", "DzBitOr", "DzBitXor", "DzBitNot", "DzBitShiftLeft", "DzBitShiftRight",
         "DzBitGetByte", "DzBitSetByte", "DzBitGet", "DzBitSet", "DzBitToInt",
@@ -217,6 +219,17 @@ final class ConverterConstants {
         {"RequestExtraRealData", "RequestExtraRealDataa"},
         {"RequestExtraStringData", "RequestExtraStringDataa"}
     };
+
+    /** {@link #RENAME_PAIRS} as old name -> new name, for whole-identifier renaming. */
+    static final java.util.Map<String, String> REQUEST_EXTRA_RENAMES = new java.util.LinkedHashMap<>();
+    /** {@link #RENAME_PAIRS} reversed: new name -> old name. */
+    static final java.util.Map<String, String> REQUEST_EXTRA_RESTORES = new java.util.LinkedHashMap<>();
+    static {
+        for (String[] pair : RENAME_PAIRS) {
+            REQUEST_EXTRA_RENAMES.put(pair[0], pair[1]);
+            REQUEST_EXTRA_RESTORES.put(pair[1], pair[0]);
+        }
+    }
 
     /** Natives whose real implementations are gated behind the Unlock checkbox.
      *  When Unlock is off, these use the real archive-backed implementations in
