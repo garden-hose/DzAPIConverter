@@ -751,12 +751,12 @@ endfunction
     endfunction
 
     function DzFrameGetMinimap takes nothing returns integer
-        return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_MINIMAP, 0))
+        return DzCompat_RegisterFrameNamed(BlzGetOriginFrame(ORIGIN_FRAME_MINIMAP, 0), "MINIMAP", 0)
     endfunction
 
     // buttonId: 0=Signal, 1=Terrain, 2=Ally filter, 3=Creep filter, 4=Formation
     function DzFrameGetMinimapButton takes integer buttonId returns integer
-        return DzCompat_RegisterFrame(BlzGetOriginFrame(ORIGIN_FRAME_MINIMAP_BUTTON, buttonId))
+        return DzCompat_RegisterFrameNamed(BlzGetOriginFrame(ORIGIN_FRAME_MINIMAP_BUTTON, buttonId), "MINIMAPBUTTON", buttonId)
     endfunction
 
     // Replaces the minimap's terrain picture with the given image file.

@@ -166,6 +166,7 @@ final class ConverterConstants {
         "JNStopwatchElapsedMinute", "JNStopwatchElapsedHour",
         "JNI2R", "JNR2I", "JNOpenBrowser",
         "JNGetMaxAttackSpeed", "JNSetMaxAttackSpeed", "JNGetSyncDelay", "JNSetSyncDelay",
+        "JNSetUnitArmor", "JNSetUnitBaseDamage", "JNSetUnitAttackCooldown", "JNSetUnitAttackRange",
         "JNGetSettingLogin", "JNGetSettingLoginID", "JNLocalLogin", "JNLogin",
         "JNObjectCharacterServerConnectCheck", "JNGetConnectionState"
     ));

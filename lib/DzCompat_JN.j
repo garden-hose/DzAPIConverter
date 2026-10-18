@@ -1,7 +1,7 @@
 // ============================================================================
 // DzCompat_JN.j
 // "JN" (JassNative) natives that can be emulated locally: string helpers, base64,
-// stopwatch, integer/real casts and the login / connection answers.
+// stopwatch, integer/real casts, the login / connection answers and the unit stat setters.
 //
 // NOT covered here: everything that needs the M16 save channel - the JNObject*
 // stores, score / rank / areasteal lists, mail, groups, daily checks, save codes, logging, memory
@@ -675,4 +675,45 @@ endfunction
 // 'BNET' = connected through Battle.net.
 function JNGetConnectionState takes nothing returns integer
     return 'BNET'
+endfunction
+
+// ---- unit stats ------------------------------------------------------------
+// JNSetUnit*: weaponIndex 1 / 2 = attack 1 / attack 2. Attack 1 goes through DzCompat_SetExtUnitState
+// (18 base damage, 22 range, 32 armor, 37 cooldown), so it shares the weapon-range quirk and the
+// attack-speed hook of DzCompat_ExtendedUnitState.j instead of writing the Reforged fields on its own.
+// Attack 2: base damage and cooldown are written to weapon index 1 [UNVERIFIED in game]; its range is
+// read only (0x40, see DzCompat_ExtendedUnitState.j), so that write is dropped.
+function JNSetUnitArmor takes unit whichUnit, real armorAmount returns nothing
+    if whichUnit != null then
+        call DzCompat_SetExtUnitState(whichUnit, 32, armorAmount)
+    endif
+endfunction
+
+function JNSetUnitBaseDamage takes unit whichUnit, integer baseDamage, integer weaponIndex returns nothing
+    if whichUnit == null then
+        return
+    endif
+    if weaponIndex == 1 then
+        call DzCompat_SetExtUnitState(whichUnit, 18, I2R(baseDamage))
+    elseif weaponIndex == 2 then
+        call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 1, baseDamage)
+    endif
+endfunction
+
+function JNSetUnitAttackCooldown takes unit whichUnit, real cooldown, integer weaponIndex returns nothing
+    if whichUnit == null then
+        return
+    endif
+    if weaponIndex == 1 then
+        call DzCompat_SetExtUnitState(whichUnit, 37, cooldown)
+    elseif weaponIndex == 2 then
+        call BlzSetUnitAttackCooldown(whichUnit, cooldown, 1)
+    endif
+endfunction
+
+// Note the argument order: the weapon index comes before the value.
+function JNSetUnitAttackRange takes unit whichUnit, integer weaponIndex, real value returns nothing
+    if whichUnit != null and weaponIndex == 1 then
+        call DzCompat_SetExtUnitState(whichUnit, 22, value)
+    endif
 endfunction
