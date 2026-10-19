@@ -359,11 +359,9 @@
                 return 'Ncl3'
             elseif data_type == 111 then
                 return 'Ncl4'
-            elseif data_type == 112 then
-                return 'Ncl5'
-            elseif data_type == 113 then
-                return 'Ncl6'
             endif
+            // E (Ncl5, boolean) and F (Ncl6, string) have no int/real level field:
+            // return 0 so they stay bookkeeping-only instead of hitting a wrong-typed Blz native.
         elseif parentId == 3 then
             // AHtb
             if data_type == 108 then
@@ -447,8 +445,8 @@
             // Aamk — all int
             return 0
         elseif parentId == 2 then
-            // ANcl: A,B real; C,D int; E,F real
-            if data_type == 110 or data_type == 111 then
+            // ANcl: A=Ncl1 real, B=Ncl2 int (target type), C=Ncl3 int (options), D=Ncl4 real
+            if data_type == 109 or data_type == 110 then
                 return 0
             endif
             return 1
