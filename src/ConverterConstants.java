@@ -30,7 +30,7 @@ final class ConverterConstants {
         "DzSimpleFontStringFindByName", "DzSimpleTextureFindByName", "KKSimpleFrameIsVisible",
         "DzFrameGetChildrenCount", "DzFrameGetChild", "DzFrameGetWidth", "DzFrameGetRealWidth",
         "DzFrameGetRealHeight", "DzGetClientWidth", "DzGetClientHeight", "DzFrameSetCheckBoxState",
-        "DzFrameGetCheckBoxState", "DzFrameSetNameContext", "DzFrameGetContext", "DzFrameIsFocus", "DzFrameSetEditBoxActive", "DzFrameSetEditBoxDisableIme",
+        "DzFrameGetCheckBoxState", "DzFrameSetNameContext", "DzFrameGetContext", "DzFrameIsFocus", "DzFrameSetEditBoxActive", "DzFrameSetEditBoxDisableIme", "DzFrameGetPointValid", "DzFrameGetPointRelative", "DzFrameGetPointRelativePoint", "DzFrameGetPointX", "DzFrameGetPointY", "DzFrameAddModel", "DzFrameSetModel2", "DzFrameSetModelColor", "DzFrameSetModelScale", "DzFrameSetModelAnimationByIndex",
         // DzCompat_Frame.j - origin-frame sub-handle lookups (BlzGetOriginFrame)
         "DzFrameGetCommandBarButton", "DzFrameGetHeroBarButton", "DzFrameGetHeroHPBar",
         "DzFrameGetHeroManaBar", "DzFrameGetItemBarButton", "DzFrameGetMinimap",
@@ -79,6 +79,8 @@ final class ConverterConstants {
         "DzTextTagSetFont", "DzTextTagGetFont",
         "DzUnitHasAbility",
         "DzGetUnitAbilityDataA", "DzSetUnitAbilityDataA", "DzGetUnitAbilityDataB", "DzSetUnitAbilityDataB", "DzGetUnitAbilityDataC", "DzSetUnitAbilityDataC", "DzGetUnitAbilityDataD", "DzSetUnitAbilityDataD", "DzGetUnitAbilityDataE", "DzSetUnitAbilityDataE",
+        "DzGetUnitAbilityMissileCount", "DzSetUnitAbilityMissileCount", "DzGetUnitAbilityTargs", "DzSetUnitAbilityTargs", "DzGetUnitAbilityUnitId", "DzSetUnitAbilityUnitId", "DzGetUnitAbilityBuildOrderId", "DzSetUnitAbilityBuildOrderId", "DzGetUnitAbilityMissileHoming", "DzSetUnitAbilityMissileHoming", "DzGetUnitAbilityMissileDamage", "DzSetUnitAbilityMissileDamage", "DzGetUnitAbilityMissileMaxDamage",
+        "DzSetUnitAbilityUpdate", "DzSetUnitAbilitySpellBookList", "DzGetUnitAbilitySpellBookList", "DzSetUnitAbilitySpellBookAddAbility", "DzSetUnitAbilitySpellBookRemoveAbility", "DzSetUnitAbilityTechReach", "DzGetUnitAbilityTechReach", "DzSetUnitAbilityTechReachTip", "DzSetUnitAbilityHotkey", "DzSetUnitAbilityBuildModel",
         "DzSetUnitAbilityRange", "DzGetUnitAbilityRange",
         "DzSetUnitAbilityArea", "DzGetUnitAbilityArea",
         "DzSetUnitAbilityCool", "DzGetUnitAbilityCool",

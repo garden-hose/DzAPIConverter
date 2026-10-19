@@ -466,3 +466,308 @@
     function DzSetUnitAbilityDataE takes unit Unit, integer abil_code, real value returns boolean
         return DzCompat_SetUnitAbilityData(Unit, abil_code, 4, value)
     endfunction
+
+    // ---- Missile count / targets / unit id / build order / homing / missile damage -----------------------
+    // kkapi.dll keeps a per-ability-instance override record and hooks the engine getters to read it, so
+    // these change real gameplay on the original platform. Reforged has no writable field for most of them.
+    //
+    // DzSet/GetUnitAbilityMissileCount (kkapi.dll 0x10056d00 / 0x1004cb60) is the exception: besides the
+    // override it writes Data C of the instance, with value (count - 1), or count itself when count < 2.
+    // That is the Data C of the missile-count spells (Ncs3 family), so it goes through DzSetUnitAbilityDataC
+    // and only reaches the engine for abilities whose parent AbilityDataFieldRegistry baked. The getter
+    // returns the override once one was set; before that it returns Data C + 1 when Data C is non zero.
+    //
+    // Targs (0x100563a0), UnitId (0x10056520), BuildOrderId (0x10056e50), MissileHoming (0x10056820) and
+    // MissileDamage only store the value in the override record. [LOCAL] here: the value is kept per unit
+    // and ability so a Get returns what the map Set, but nothing in the game reacts to it. A Get before any
+    // Set returns 0 / false (the dll would return the ability's own value, which Reforged cannot read for
+    // these). Property tags 60..69 in gDzCompatUnitStateTable are used for them.
+    function DzSetUnitAbilityMissileCount takes unit u, integer abil_id, integer missile_count returns boolean
+        local integer data = missile_count
+        if BlzGetUnitAbility(u, abil_id) == null then
+            return false
+        endif
+        if missile_count >= 2 then
+            set data = missile_count - 1
+        endif
+        call SaveInteger(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 60), missile_count)
+        call SaveBoolean(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 61), true)
+        call DzSetUnitAbilityDataC(u, abil_id, I2R(data))
+        return true
+    endfunction
+
+    function DzGetUnitAbilityMissileCount takes unit u, integer abil_id returns integer
+        local integer dataC
+        if BlzGetUnitAbility(u, abil_id) == null then
+            return 0
+        endif
+        if LoadBoolean(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 61)) then
+            return LoadInteger(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 60))
+        endif
+        set dataC = R2I(DzGetUnitAbilityDataC(u, abil_id))
+        if dataC != 0 then
+            return dataC + 1
+        endif
+        return 0
+    endfunction
+
+    function DzSetUnitAbilityTargs takes unit Unit, integer abil_code, integer value returns boolean
+        if BlzGetUnitAbility(Unit, abil_code) == null then
+            return false
+        endif
+        call SaveInteger(gDzCompatUnitStateTable, GetHandleId(Unit), DzCompat_AbilKey(abil_code, 62), value)
+        return true
+    endfunction
+
+    function DzGetUnitAbilityTargs takes unit Unit, integer abil_code returns integer
+        return LoadInteger(gDzCompatUnitStateTable, GetHandleId(Unit), DzCompat_AbilKey(abil_code, 62))
+    endfunction
+
+    function DzSetUnitAbilityUnitId takes unit Unit, integer abil_code, integer value returns boolean
+        if BlzGetUnitAbility(Unit, abil_code) == null then
+            return false
+        endif
+        call SaveInteger(gDzCompatUnitStateTable, GetHandleId(Unit), DzCompat_AbilKey(abil_code, 63), value)
+        return true
+    endfunction
+
+    function DzGetUnitAbilityUnitId takes unit Unit, integer abil_code returns integer
+        return LoadInteger(gDzCompatUnitStateTable, GetHandleId(Unit), DzCompat_AbilKey(abil_code, 63))
+    endfunction
+
+    function DzSetUnitAbilityBuildOrderId takes unit Unit, integer abil_code, integer value returns boolean
+        if BlzGetUnitAbility(Unit, abil_code) == null then
+            return false
+        endif
+        call SaveInteger(gDzCompatUnitStateTable, GetHandleId(Unit), DzCompat_AbilKey(abil_code, 64), value)
+        return true
+    endfunction
+
+    function DzGetUnitAbilityBuildOrderId takes unit Unit, integer abil_code returns integer
+        return LoadInteger(gDzCompatUnitStateTable, GetHandleId(Unit), DzCompat_AbilKey(abil_code, 64))
+    endfunction
+
+    function DzSetUnitAbilityMissileHoming takes unit u, integer abil_id, boolean missile_homing returns boolean
+        if BlzGetUnitAbility(u, abil_id) == null then
+            return false
+        endif
+        call SaveBoolean(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 65), missile_homing)
+        return true
+    endfunction
+
+    function DzGetUnitAbilityMissileHoming takes unit u, integer abil_id returns boolean
+        return LoadBoolean(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 65))
+    endfunction
+
+    function DzSetUnitAbilityMissileDamage takes unit u, integer abil_id, real damage, real max_damage, attacktype atktp, damagetype dmgtp returns boolean
+        if BlzGetUnitAbility(u, abil_id) == null then
+            return false
+        endif
+        call SaveReal(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 66), damage)
+        call SaveReal(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 67), max_damage)
+        return true
+    endfunction
+
+    function DzGetUnitAbilityMissileDamage takes unit u, integer abil_id returns real
+        return LoadReal(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 66))
+    endfunction
+
+    function DzGetUnitAbilityMissileMaxDamage takes unit u, integer abil_id returns real
+        return LoadReal(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 67))
+    endfunction
+
+    // ---- Update / SpellBook / TechReach / Hotkey / BuildModel --------------------------------------------
+    // Rawcode text of an ability id ("AHhb"), the format of the spell list field. Only 0-9 A-Z a-z are
+    // produced; any other byte becomes "?".
+    function DzCompat_RawcodeToString takes integer id returns string
+        local string chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        local string result = ""
+        local integer shift = 16777216
+        local integer i = 0
+        local integer c
+        loop
+            exitwhen i >= 4
+            // byte i counted from the most significant one; ASCII rawcodes are always positive
+            set c = id / shift
+            set id = id - c * shift
+            if c >= 48 and c <= 57 then
+                set result = result + SubString(chars, c - 48, c - 47)
+            elseif c >= 65 and c <= 90 then
+                set result = result + SubString(chars, c - 55, c - 54)
+            elseif c >= 97 and c <= 122 then
+                set result = result + SubString(chars, c - 61, c - 60)
+            else
+                set result = result + "?"
+            endif
+            set shift = shift / 256
+            set i = i + 1
+        endloop
+        return result
+    endfunction
+
+    // Re-applies an ability after its fields were written so the unit and its UI pick the change up
+    // (what kkapi.dll's DzSetUnitAbilityUpdate does for its overrides, 0x100583c0). Reforged only re-reads
+    // level fields when the level changes, so the ability is bumped one level and put back; a one level
+    // ability gets a second level for the moment, the same trick DzCompat_YDWE_EX.j uses.
+    function DzCompat_RefreshAbility takes unit u, integer abilId returns nothing
+        local ability a = BlzGetUnitAbility(u, abilId)
+        local integer lvl = GetUnitAbilityLevel(u, abilId)
+        local integer maxLevel
+        if a == null or lvl <= 0 then
+            return
+        endif
+        set maxLevel = BlzGetAbilityIntegerField(a, ABILITY_IF_LEVELS)
+        if maxLevel < 2 then
+            call BlzSetAbilityIntegerField(a, ABILITY_IF_LEVELS, 2)
+            call IncUnitAbilityLevel(u, abilId)
+            call DecUnitAbilityLevel(u, abilId)
+            call BlzSetAbilityIntegerField(a, ABILITY_IF_LEVELS, maxLevel)
+        elseif lvl < maxLevel then
+            call IncUnitAbilityLevel(u, abilId)
+            call DecUnitAbilityLevel(u, abilId)
+        else
+            call DecUnitAbilityLevel(u, abilId)
+            call IncUnitAbilityLevel(u, abilId)
+        endif
+    endfunction
+
+    function DzSetUnitAbilityUpdate takes unit u, integer abil_id returns boolean
+        if BlzGetUnitAbility(u, abil_id) == null then
+            return false
+        endif
+        call DzCompat_RefreshAbility(u, abil_id)
+        return true
+    endfunction
+
+    // True when the comma separated list holds the rawcode text.
+    function DzCompat_SpellListHas takes string list, string code returns boolean
+        local integer n = StringLength(list)
+        local integer startPos = 0
+        local integer i
+        loop
+            exitwhen startPos > n
+            set i = startPos
+            loop
+                exitwhen i >= n or SubString(list, i, i + 1) == ","
+                set i = i + 1
+            endloop
+            if SubString(list, startPos, i) == code then
+                return true
+            endif
+            set startPos = i + 1
+        endloop
+        return false
+    endfunction
+
+    // The spell book's contents are the comma separated "Spell List" level field (spb1) of the spell book
+    // ability, current level. The dll acts on the live spell book instance only when the ability is a
+    // spell book (type tag 'Aspb'), and returns false otherwise; Reforged has no type getter, so a
+    // non spell book ability simply reports the field write as failed. [APPROX] the dll's extra
+    // "save_cooldown" argument is not available in its decompiled body and is ignored.
+    function DzSetUnitAbilitySpellBookList takes unit u, integer abil_id, string abil_list, boolean save_cooldown returns boolean
+        local ability a = BlzGetUnitAbility(u, abil_id)
+        if a == null then
+            return false
+        endif
+        if not BlzSetAbilityStringLevelField(a, ABILITY_SLF_SPELL_LIST, DzCompat_GetAbilityLevelIndex(u, abil_id), abil_list) then
+            return false
+        endif
+        call DzCompat_RefreshAbility(u, abil_id)
+        return true
+    endfunction
+
+    function DzGetUnitAbilitySpellBookList takes unit u, integer abil_id returns string
+        local ability a = BlzGetUnitAbility(u, abil_id)
+        if a == null then
+            return ""
+        endif
+        return BlzGetAbilityStringLevelField(a, ABILITY_SLF_SPELL_LIST, DzCompat_GetAbilityLevelIndex(u, abil_id))
+    endfunction
+
+    // Add: false when the ability is already in the list (0x10057010), otherwise appended at the end.
+    function DzSetUnitAbilitySpellBookAddAbility takes unit u, integer abil_id, integer add_abil_id returns boolean
+        local string list = DzGetUnitAbilitySpellBookList(u, abil_id)
+        local string code = DzCompat_RawcodeToString(add_abil_id)
+        if BlzGetUnitAbility(u, abil_id) == null or DzCompat_SpellListHas(list, code) then
+            return false
+        endif
+        if list != "" then
+            set list = list + ","
+        endif
+        return DzSetUnitAbilitySpellBookList(u, abil_id, list + code, false)
+    endfunction
+
+    // Remove: rebuilds the list without the ability and reports whether it was in it (0x10057c00).
+    function DzSetUnitAbilitySpellBookRemoveAbility takes unit u, integer abil_id, integer remove_abil_id returns boolean
+        local string list = DzGetUnitAbilitySpellBookList(u, abil_id)
+        local string code = DzCompat_RawcodeToString(remove_abil_id)
+        local string result = ""
+        local boolean found = false
+        local integer i = 0
+        local integer n = StringLength(list)
+        local integer startPos = 0
+        local string item
+        if BlzGetUnitAbility(u, abil_id) == null then
+            return false
+        endif
+        loop
+            exitwhen startPos > n
+            set i = startPos
+            loop
+                exitwhen i >= n or SubString(list, i, i + 1) == ","
+                set i = i + 1
+            endloop
+            set item = SubString(list, startPos, i)
+            if item == code then
+                set found = true
+            elseif item != "" then
+                if result != "" then
+                    set result = result + ","
+                endif
+                set result = result + item
+            endif
+            set startPos = i + 1
+        endloop
+        if not found then
+            return false
+        endif
+        return DzSetUnitAbilitySpellBookList(u, abil_id, result, false)
+    endfunction
+
+    // TechReach (0x10057e60 / 0x1004ceb0): marks whether the ability's tech requirement counts as met, then
+    // refreshes the command card. Reforged has no such flag, so the value is only remembered (tag 68, with
+    // 69 as the "was set" mark) and the getter reports true until a map sets it, which is the normal state.
+    function DzSetUnitAbilityTechReach takes unit u, integer abil_id, boolean reach returns boolean
+        if BlzGetUnitAbility(u, abil_id) == null then
+            return false
+        endif
+        call SaveBoolean(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 68), reach)
+        call SaveBoolean(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 69), true)
+        return true
+    endfunction
+
+    function DzGetUnitAbilityTechReach takes unit u, integer abil_id returns boolean
+        if BlzGetUnitAbility(u, abil_id) == null then
+            return false
+        endif
+        if not LoadBoolean(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 69)) then
+            return true
+        endif
+        return LoadBoolean(gDzCompatUnitStateTable, GetHandleId(u), DzCompat_AbilKey(abil_id, 68))
+    endfunction
+
+    // The tip text (0x10057f30) is only shown by the dll's own tech-requirement tooltip; no Reforged equivalent.
+    function DzSetUnitAbilityTechReachTip takes unit u, integer abil_id, string tip returns boolean
+        return BlzGetUnitAbility(u, abil_id) != null
+    endfunction
+
+    // Hotkey (0x10056ba0) and BuildModel (0x10054e20) change what the dll's command card and build
+    // placement show. Reforged exposes no setter for either (a hotkey can only be read, from the baked
+    // ability.ini table in DzCompat_YDWE_EX.j), so they only report whether the unit has the ability.
+    function DzSetUnitAbilityHotkey takes unit Unit, integer abil_code, string key returns boolean
+        return BlzGetUnitAbility(Unit, abil_code) != null
+    endfunction
+
+    function DzSetUnitAbilityBuildModel takes unit Unit, integer abil_code, string model_path, real model_scale returns boolean
+        return BlzGetUnitAbility(Unit, abil_code) != null
+    endfunction

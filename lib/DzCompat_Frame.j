@@ -40,6 +40,11 @@
         // DzFrameSetScript/DzFrameSetScriptAsync.
         hashtable gDzCompatFuncTriggers = InitHashtable()
         hashtable gDzCompatFocusTrack = InitHashtable()
+        // DzFrameSetModelScale: the scale factor already applied to a model frame (the dll multiplies, it does not set).
+        hashtable gDzCompatModelScale = InitHashtable()
+        // DzFrameGetPoint*: the anchors a map set, as it passed them (before any margin shift). Parent = frame id,
+        // child = point * 8 + field (0 relative frame, 1 relative point, 2 x, 3 y); the key itself marks "set".
+        hashtable gDzCompatFramePoints = InitHashtable()
 
         // Cached GameUI origin frame (see DzCompat_GetGameUI).
         framehandle gDzCompatGameUI = null
@@ -814,6 +819,14 @@ endfunction
     // null framehandle handed to a Blz* native is not something to rely on.
     // Point ids outside 0..8 are ignored for the same reason.
 
+    // Remembers one anchor for the DzFrameGetPoint* getters. Reforged can set an anchor but cannot read it back.
+    function DzCompat_TrackFramePoint takes integer frame, integer point, integer relativeFrame, integer relativePoint, real x, real y returns nothing
+        call SaveInteger(gDzCompatFramePoints, frame, point * 8, relativeFrame)
+        call SaveInteger(gDzCompatFramePoints, frame, point * 8 + 1, relativePoint)
+        call SaveReal(gDzCompatFramePoints, frame, point * 8 + 2, x)
+        call SaveReal(gDzCompatFramePoints, frame, point * 8 + 3, y)
+    endfunction
+
     function DzFrameSetPoint takes integer frame, integer point, integer relativeFrame, integer relativePoint, real x, real y returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
         local framehandle r = DzCompat_GetFrame(relativeFrame)
@@ -821,6 +834,7 @@ endfunction
             return
         endif
         call BlzFrameSetPoint(f, ConvertFramePointType(point), r, ConvertFramePointType(relativePoint), DzCompat_AnchorX(r, relativePoint, x), y)
+        call DzCompat_TrackFramePoint(frame, point, relativeFrame, relativePoint, x, y)
         if DZCOMPAT_DEBUG_SCREEN and r == DzCompat_GetGameUI() and gDzCompatDbgLog < 10 then
             set gDzCompatDbgLog = gDzCompatDbgLog + 1
             call DzCompat_DbgSay("SetPoint #" + I2S(frame) + " '" + BlzFrameGetName(f) + "' point " + I2S(point) + " -> GameUI point " + I2S(relativePoint) + ", x " + R2S(x) + " -> " + R2S(DzCompat_AnchorX(r, relativePoint, x)) + ", y " + R2S(y) + ", visible " + DzCompat_DbgB(BlzFrameIsVisible(f)))
@@ -845,6 +859,7 @@ endfunction
             return
         endif
         call BlzFrameSetAbsPoint(f, ConvertFramePointType(point), x, y)
+        call DzCompat_TrackFramePoint(frame, point, 0, 0, x, y)
         if LoadBoolean(gDzCompatTextFit, frame, 0) then
             if LoadInteger(gDzCompatTextFit, frame, 4) != 0 and LoadInteger(gDzCompatTextFit, frame, 5) != point then
                 call SaveBoolean(gDzCompatTextFit, frame, 11, true)
@@ -870,6 +885,8 @@ endfunction
         else
             call BlzFrameSetAllPoints(f, r)
         endif
+        call DzCompat_TrackFramePoint(frame, 0, relativeFrame, 0, 0., 0.)
+        call DzCompat_TrackFramePoint(frame, 8, relativeFrame, 8, 0., 0.)
         // size now comes from the other frame, so the auto-fit must leave this one alone
         call SaveBoolean(gDzCompatTextFit, frame, 11, true)
         return true
@@ -879,9 +896,37 @@ endfunction
         local framehandle f = DzCompat_GetFrame(frame)
         if f != null then
             call BlzFrameClearAllPoints(f)
+            call FlushChildHashtable(gDzCompatFramePoints, frame)
             call SaveInteger(gDzCompatTextFit, frame, 4, 0)
             call SaveBoolean(gDzCompatTextFit, frame, 11, false)
         endif
+    endfunction
+
+    // ---- DzFrameGetPoint* ------------------------------------------------------------------------------
+    // kkapi_local_plugin.dll 0x10076a10..0x10076a90 look the anchor up on the frame (the point argument is
+    // the same 0..8 number DzFrameSetPoint takes) and read what was stored: valid = the anchor exists,
+    // Relative = its relative frame, RelativePoint = its relative point, X / Y = its offsets. A point that
+    // was never set gives false / 0 / 0.0. Reforged has no anchor getter, so the values come from
+    // DzCompat_TrackFramePoint; the offsets are the ones the map passed, not the margin-shifted ones used
+    // internally. A frame the map anchored through the game UI instead of this lib is not known here.
+    function DzFrameGetPointValid takes integer frame, integer anchor returns boolean
+        return HaveSavedInteger(gDzCompatFramePoints, frame, anchor * 8)
+    endfunction
+
+    function DzFrameGetPointRelative takes integer frame, integer anchor returns integer
+        return LoadInteger(gDzCompatFramePoints, frame, anchor * 8)
+    endfunction
+
+    function DzFrameGetPointRelativePoint takes integer frame, integer anchor returns integer
+        return LoadInteger(gDzCompatFramePoints, frame, anchor * 8 + 1)
+    endfunction
+
+    function DzFrameGetPointX takes integer frame, integer anchor returns real
+        return LoadReal(gDzCompatFramePoints, frame, anchor * 8 + 2)
+    endfunction
+
+    function DzFrameGetPointY takes integer frame, integer anchor returns real
+        return LoadReal(gDzCompatFramePoints, frame, anchor * 8 + 3)
     endfunction
 
     function DzFrameSetSize takes integer frame, real w, real h returns nothing
@@ -1075,6 +1120,58 @@ endfunction
             set flags = 1
         endif
         call BlzFrameSetSpriteAnimate(f, animId, flags)
+    endfunction
+
+    // ---- KK model frames -------------------------------------------------------------------------------
+    // kkapi.dll creates its own model-frame object (DzFrameAddModel 0x10071ed0) whose model has a matrix,
+    // a camera and effect attachments. The closest Reforged object is a SPRITE frame (BlzFrameSetModel),
+    // so only the parts a sprite can express are ported: create, model path, color+alpha, scale, animation
+    // index. Camera source/target, position, rotation, size, speed, texture, particle size and the
+    // effect attachments have no sprite counterpart and are left to the stubs.
+    function DzFrameAddModel takes integer parent_frame returns integer
+        return DzCreateFrameByTagName("SPRITE", "", parent_frame, "", 0)
+    endfunction
+
+    // The team color argument cannot be set on a sprite frame and is ignored.
+    function DzFrameSetModel2 takes integer model_frame, string model_file, integer team_color_id returns nothing
+        local framehandle f = DzCompat_GetFrame(model_frame)
+        if f == null then
+            return
+        endif
+        if model_file == null then
+            set model_file = ""
+        endif
+        call BlzFrameSetModel(f, model_file, 0)
+    endfunction
+
+    // The dll sets the color and uses the top byte of the same integer as the alpha (0x10073dd0:
+    // param >> 24), the DzGetColor (a, r, g, b) layout, which BlzFrameSetVertexColor also takes.
+    function DzFrameSetModelColor takes integer model_frame, integer color returns nothing
+        call DzFrameSetVertexColor(model_frame, color)
+    endfunction
+
+    // [APPROX] the dll multiplies the model matrix by (x, y, z) on top of whatever it already was
+    // (0x10074320), so repeated calls compound. BlzFrameSetScale is uniform, so the mean of the three factors
+    // is compounded and applied.
+    function DzFrameSetModelScale takes integer model_frame, real x, real y, real z returns nothing
+        local framehandle f = DzCompat_GetFrame(model_frame)
+        local real total = 1.0
+        if f == null then
+            return
+        endif
+        if HaveSavedReal(gDzCompatModelScale, model_frame, 0) then
+            set total = LoadReal(gDzCompatModelScale, model_frame, 0)
+        endif
+        set total = total * (x + y + z) / 3.0
+        call SaveReal(gDzCompatModelScale, model_frame, 0, total)
+        call BlzFrameSetScale(f, total)
+    endfunction
+
+    function DzFrameSetModelAnimationByIndex takes integer model_frame, integer anim_index returns nothing
+        local framehandle f = DzCompat_GetFrame(model_frame)
+        if f != null then
+            call BlzFrameSetSpriteAnimate(f, anim_index, 0)
+        endif
     endfunction
 
     // The FIRST argument is the alpha: the real client builds (a1 << 24) | (a2 << 16) | (a3 << 8) | a4,
