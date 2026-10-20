@@ -76,6 +76,11 @@
         // ParentId values must match the switch in DzCompat_GetAbilityDataField
         // / DzCompat_GetAbilityDataFieldKind (1=Aamk, 2=ANcl, ...).
         hashtable gYDWEEXAbilityParent = InitHashtable()
+        // Cast range restore (see CastRangeRegistry.java): abilcode -> range (child 0), plus the
+        // list of registered abilcodes so one unit can be checked against all of them.
+        hashtable gDzCompatCastRange = InitHashtable()
+        integer array gDzCompatCastRangeCodes
+        integer gDzCompatCastRangeCount = 0
 		// DATA_A..I (108-116) values written through EXSetAbilityDataReal/Integer, kept per
         // ability rawcode (parent = abilcode, child = data_type * 100 + level; child 0 with a
         // saved boolean marks "this rawcode has values"). In YDWE/KKAPI these natives write the
@@ -633,6 +638,88 @@
     // EXGetAbilityDataInteger below. An ability with no entry (never customized in
     // ability.ini, or no table supplied) returns 0 - see the class comment in
     // AbilityHotkeyRegistry.java for why that gap can exist.
+    // ---- Cast range restore -------------------------------------------------------
+    // Abilities without a Rng line in ability.ini take the running game's default range, which
+    // for Channel clones is far shorter in Reforged than in the KKAPI game version. The baked
+    // DzCompat_CastRangePut calls list those abilities; the range is written to every level of
+    // the unit's instance (Blz*LevelField only changes the one instance).
+    function DzCompat_CastRangePut takes integer abilcode, real range returns nothing
+        if not HaveSavedReal(gDzCompatCastRange, abilcode, 0) then
+            set gDzCompatCastRangeCodes[gDzCompatCastRangeCount] = abilcode
+            set gDzCompatCastRangeCount = gDzCompatCastRangeCount + 1
+        endif
+        call SaveReal(gDzCompatCastRange, abilcode, 0, range)
+    endfunction
+
+    function DzCompat_CastRangeApply takes unit u returns nothing
+        local integer i = 0
+        local integer abilCode
+        local integer lvl
+        local integer levels
+        local ability a
+        if u == null then
+            return
+        endif
+        loop
+            exitwhen i >= gDzCompatCastRangeCount
+            set abilCode = gDzCompatCastRangeCodes[i]
+            if GetUnitAbilityLevel(u, abilCode) > 0 then
+                set a = BlzGetUnitAbility(u, abilCode)
+                if a != null then
+                    set levels = BlzGetAbilityIntegerField(a, ABILITY_IF_LEVELS)
+                    set lvl = 0
+                    loop
+                        exitwhen lvl >= levels
+                        call BlzSetAbilityRealLevelField(a, ABILITY_RLF_CAST_RANGE, lvl, LoadReal(gDzCompatCastRange, abilCode, 0))
+                        set lvl = lvl + 1
+                    endloop
+                endif
+            endif
+            set i = i + 1
+        endloop
+        set a = null
+    endfunction
+
+    function DzCompat_CastRangeOnEnter takes nothing returns boolean
+        call DzCompat_CastRangeApply(GetEnteringUnit())
+        return false
+    endfunction
+
+    function DzCompat_CastRangeOnLearn takes nothing returns boolean
+        call DzCompat_CastRangeApply(GetLearningUnit())
+        return false
+    endfunction
+
+    function DzCompat_CastRangeSweepEnum takes nothing returns nothing
+        call DzCompat_CastRangeApply(GetEnumUnit())
+    endfunction
+
+    // Units placed in the editor may exist before or after this runs, so everything already on
+    // the map is swept once on a zero-second timer, after the map has finished initializing.
+    function DzCompat_CastRangeSweep takes nothing returns nothing
+        local group g = CreateGroup()
+        call GroupEnumUnitsInRect(g, GetWorldBounds(), null)
+        call ForGroup(g, function DzCompat_CastRangeSweepEnum)
+        call DestroyGroup(g)
+        call DestroyTimer(GetExpiredTimer())
+        set g = null
+    endfunction
+
+    function DzCompat_CastRangeStart takes nothing returns nothing
+        local trigger enterTrg = CreateTrigger()
+        local trigger learnTrg = CreateTrigger()
+        local region r = CreateRegion()
+        call RegionAddRect(r, GetWorldBounds())
+        call TriggerRegisterEnterRegion(enterTrg, r, null)
+        call TriggerAddCondition(enterTrg, Condition(function DzCompat_CastRangeOnEnter))
+        call TriggerRegisterAnyUnitEventBJ(learnTrg, EVENT_PLAYER_HERO_SKILL)
+        call TriggerAddCondition(learnTrg, Condition(function DzCompat_CastRangeOnLearn))
+        call TimerStart(CreateTimer(), 0.0, false, function DzCompat_CastRangeSweep)
+        set enterTrg = null
+        set learnTrg = null
+        set r = null
+    endfunction
+
     function DzCompat_HotkeyPut takes integer abilcode, integer which, integer asciiCode returns nothing
         call SaveInteger(gYDWEEXHotkey, abilcode, which, asciiCode)
     endfunction
