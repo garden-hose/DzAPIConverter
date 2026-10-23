@@ -52,6 +52,13 @@ final class CastRangeRegistry {
 
     static final String OVERRIDE_FILE = "castrange.ini";
 
+    /**
+     * Follow Through Time given to Channel ('ANcl') clones whose DataA is 0 at a level. On
+     * Reforged a Channel spell with a Follow Through Time of exactly 0 never ends its cast: the
+     * hero stays in the spell animation and cannot move or act. A tiny value ends it at once.
+     */
+    static final float FOLLOW_THROUGH_FIX = 0.01f;
+
     /** Standard point-and-click spell range (Storm Bolt, Death Coil, Slow, ...). */
     static final float RANGE_STANDARD = 600.0f;
     /** Long-reach area spell range (Blizzard, ...). */
@@ -79,6 +86,7 @@ final class CastRangeRegistry {
         parse(lines, abilParent, hasRange, firstValues);
 
         Map<String, Float> overrides = readOverrides(tableDir, logger);
+        Map<String, List<Float>> dataA = parseDataA(lines);
 
         List<String> statements = new ArrayList<>();
         List<String> guessed = new ArrayList<>();
@@ -117,8 +125,28 @@ final class CastRangeRegistry {
             log(logger, "Cast range guessed from Target Type/Area for " + guessed.size() +
                     " Channel ability(ies) not listed in " + OVERRIDE_FILE + ": " + guessed);
         }
+        int rangeCount = statements.size();
+        int followCount = 0;
+        for (Map.Entry<String, String> e : abilParent.entrySet()) {
+            if (!"ANCL".equals(e.getValue().toUpperCase(Locale.ROOT))) continue;
+            List<Float> levels = dataA.get(e.getKey());
+            if (levels == null) continue;
+            boolean any = false;
+            for (int i = 0; i < levels.size(); i++) {
+                if (levels.get(i) != null && levels.get(i) <= 0f) {
+                    statements.add("    call DzCompat_FollowThroughPut('" + e.getKey() + "'," + i + "," +
+                            FOLLOW_THROUGH_FIX + ")");
+                    any = true;
+                }
+            }
+            if (any) followCount++;
+        }
+        if (followCount > 0) {
+            log(logger, "Follow Through Time 0 raised to " + FOLLOW_THROUGH_FIX + " for " + followCount +
+                    " Channel ability(ies) (a 0 value leaves the hero stuck in the cast on Reforged)");
+        }
         if (statements.isEmpty()) {
-            log(logger, file.getFileName() + ": no abilities need a cast range fix");
+            log(logger, file.getFileName() + ": no abilities need a cast range or follow through fix");
             return List.of();
         }
 
@@ -138,8 +166,8 @@ final class CastRangeRegistry {
         }
         out.add("    call DzCompat_CastRangeStart()");
         out.add("endfunction");
-        log(logger, "Baked cast range fix for " + statements.size() + " ability(ies) from " +
-                file.getFileName());
+        log(logger, "Baked " + rangeCount + " cast range and " + (statements.size() - rangeCount) +
+                " follow through statement(s) from " + file.getFileName());
         return out;
     }
 
@@ -235,7 +263,80 @@ final class CastRangeRegistry {
         int comma = s.indexOf(',');
         String v = (comma >= 0 ? s.substring(0, comma) : s).trim();
         if (v.endsWith(",")) v = v.substring(0, v.length() - 1).trim();
+        v = stripIndex(v);
         return v.isEmpty() ? null : v;
+    }
+
+    /** Drops the "1 = " prefix of an indexed array element such as {@code 3 = 12.0}. */
+    private static String stripIndex(String v) {
+        int eq = v.indexOf('=');
+        if (eq > 0 && v.substring(0, eq).trim().matches("\\d+")) return v.substring(eq + 1).trim();
+        return v;
+    }
+
+    /**
+     * Every level's DataA (Follow Through Time for a Channel clone) per ability section. Handles
+     * the single-line form {@code DataA = {0.0, 0.0}}, the multi-line form, and the indexed form
+     * ({@code 1 = 0.0,}). An unreadable element is kept as null so its level is left alone.
+     */
+    private static Map<String, List<Float>> parseDataA(List<String> lines) {
+        Map<String, List<Float>> out = new LinkedHashMap<>();
+        String current = null;
+        boolean inArray = false;
+        List<Float> target = null;
+        for (String raw : lines) {
+            String t = raw.trim();
+            if (inArray) {
+                if (t.equals("}") || t.equals("},")) {
+                    inArray = false;
+                } else if (!t.isEmpty() && !t.startsWith("--")) {
+                    String v = t.endsWith(",") ? t.substring(0, t.length() - 1).trim() : t;
+                    target.add(readFloat(stripIndex(v)));
+                }
+                continue;
+            }
+            if (t.isEmpty() || t.startsWith("--")) continue;
+            if (t.charAt(0) == '[' && t.endsWith("]")) {
+                String id = t.substring(1, t.length() - 1);
+                current = SlkTableRegistry.ID_PATTERN.matcher(id).matches() ? id : null;
+                continue;
+            }
+            int eq = t.indexOf('=');
+            if (eq <= 0 || current == null) continue;
+            String key = t.substring(0, eq).trim();
+            String val = t.substring(eq + 1).trim();
+            if (!key.equalsIgnoreCase("DataA")) continue;
+            List<Float> list = new ArrayList<>();
+            if (val.startsWith("{")) {
+                String body = val.substring(1);
+                if (body.endsWith("}")) {
+                    body = body.substring(0, body.length() - 1);
+                    for (String part : body.split(",")) {
+                        if (!part.trim().isEmpty()) list.add(readFloat(stripIndex(part.trim())));
+                    }
+                } else {
+                    inArray = true;
+                    target = list;
+                    if (!body.trim().isEmpty()) {
+                        for (String part : body.split(",")) {
+                            if (!part.trim().isEmpty()) list.add(readFloat(stripIndex(part.trim())));
+                        }
+                    }
+                }
+            } else {
+                list.add(readFloat(val));
+            }
+            out.put(current, list);
+        }
+        return out;
+    }
+
+    private static Float readFloat(String v) {
+        try {
+            return Float.parseFloat(v.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static int parseInt(String v, int fallback) {

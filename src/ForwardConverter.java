@@ -363,6 +363,7 @@ final class ForwardConverter {
             castRangeLines = CastRangeRegistry.buildRegistry(slkTableDir, logger);
             if (!castRangeLines.isEmpty()) {
                 neededNames.add("DzCompat_CastRangePut");
+                neededNames.add("DzCompat_FollowThroughPut");
                 neededNames.add("DzCompat_CastRangeStart");
             }
         }
@@ -620,7 +621,7 @@ final class ForwardConverter {
             if (JassScript.injectStatementIntoMain(finalOutput,
                     "call ExecuteFunc(\"" + CastRangeRegistry.INIT_FUNCTION + "\")")) {
                 logger.log("[" + Timestamps.now() + "] Injected " + castRangeLines.size() +
-                           " lines for the ability cast range fix");
+                           " lines for the ability cast range / follow through fix");
             } else {
                 logger.log("[" + Timestamps.now() + "] WARNING: function main not found - call " +
                            "ExecuteFunc(\"" + CastRangeRegistry.INIT_FUNCTION + "\") once at map init yourself");

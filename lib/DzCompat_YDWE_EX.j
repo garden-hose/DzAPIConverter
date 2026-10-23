@@ -81,6 +81,11 @@
         hashtable gDzCompatCastRange = InitHashtable()
         integer array gDzCompatCastRangeCodes
         integer gDzCompatCastRangeCount = 0
+        // Follow Through Time restore (see CastRangeRegistry.java): abilcode -> value per level
+        // (child = level index + 1), plus the list of registered abilcodes.
+        hashtable gDzCompatFollowThrough = InitHashtable()
+        integer array gDzCompatFollowThroughCodes
+        integer gDzCompatFollowThroughCount = 0
 		// DATA_A..I (108-116) values written through EXSetAbilityDataReal/Integer, kept per
         // ability rawcode (parent = abilcode, child = data_type * 100 + level; child 0 with a
         // saved boolean marks "this rawcode has values"). In YDWE/KKAPI these natives write the
@@ -651,6 +656,45 @@
         call SaveReal(gDzCompatCastRange, abilcode, 0, range)
     endfunction
 
+    // A Channel clone with Follow Through Time 0 never finishes its cast on Reforged (the hero stays
+    // in the spell animation and cannot move), so the baked calls give every such level a tiny value.
+    function DzCompat_FollowThroughPut takes integer abilcode, integer levelIndex, real value returns nothing
+        if not HaveSavedReal(gDzCompatFollowThrough, abilcode, 0) then
+            set gDzCompatFollowThroughCodes[gDzCompatFollowThroughCount] = abilcode
+            set gDzCompatFollowThroughCount = gDzCompatFollowThroughCount + 1
+            call SaveReal(gDzCompatFollowThrough, abilcode, 0, 1.0)
+        endif
+        call SaveReal(gDzCompatFollowThrough, abilcode, levelIndex + 1, value)
+    endfunction
+
+    function DzCompat_FollowThroughApply takes unit u returns nothing
+        local integer i = 0
+        local integer abilCode
+        local integer lvl
+        local integer levels
+        local ability a
+        loop
+            exitwhen i >= gDzCompatFollowThroughCount
+            set abilCode = gDzCompatFollowThroughCodes[i]
+            if GetUnitAbilityLevel(u, abilCode) > 0 then
+                set a = BlzGetUnitAbility(u, abilCode)
+                if a != null then
+                    set levels = BlzGetAbilityIntegerField(a, ABILITY_IF_LEVELS)
+                    set lvl = 0
+                    loop
+                        exitwhen lvl >= levels
+                        if HaveSavedReal(gDzCompatFollowThrough, abilCode, lvl + 1) then
+                            call BlzSetAbilityRealLevelField(a, ABILITY_RLF_FOLLOW_THROUGH_TIME, lvl, LoadReal(gDzCompatFollowThrough, abilCode, lvl + 1))
+                        endif
+                        set lvl = lvl + 1
+                    endloop
+                endif
+            endif
+            set i = i + 1
+        endloop
+        set a = null
+    endfunction
+
     function DzCompat_CastRangeApply takes unit u returns nothing
         local integer i = 0
         local integer abilCode
@@ -660,6 +704,7 @@
         if u == null then
             return
         endif
+        call DzCompat_FollowThroughApply(u)
         loop
             exitwhen i >= gDzCompatCastRangeCount
             set abilCode = gDzCompatCastRangeCodes[i]
