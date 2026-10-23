@@ -88,8 +88,9 @@ final class ExtendedUnitStateConverter {
 
     /** Indices lib/DzCompat_ExtendedUnitState.j has a real/approximate case for. Kept in sync
      *  with that file by hand - update both when adding support for a new index. */
-    private static final TreeSet<Long> KNOWN_INDICES = new TreeSet<>(List.of(16L, 17L, 18L, 19L, 20L, 21L, 22L, 32L,
-            33L, 34L, 35L, 36L, 37L, 38L, 40L, 41L, 64L, 80L, 81L, 82L, 83L, 84L, 86L, 87L, 96L));
+    private static final TreeSet<Long> KNOWN_INDICES = new TreeSet<>(List.of(1L, 3L, 16L, 17L, 18L, 19L, 20L, 21L, 22L, 32L,
+            33L, 34L, 35L, 36L, 37L, 38L, 39L, 40L, 41L, 48L, 49L, 50L, 51L, 52L, 53L, 54L, 55L, 56L, 57L,
+            64L, 65L, 66L, 67L, 68L, 69L, 70L, 71L, 80L, 81L, 82L, 83L, 84L, 85L, 86L, 87L, 88L, 89L, 96L));
 
     static Result convert(List<String> inputLines) {
         List<String> lines = new ArrayList<>(inputLines);
@@ -219,7 +220,14 @@ final class ExtendedUnitStateConverter {
         boolean innerChanged = rewrittenUnitArg != null || rewrittenValueArg != null;
 
         Long idx = extractConvertUnitStateLiteral(stateArg);
-        if (idx == null || isStockIndex(idx)) {
+        // Setting max life/mana through SetUnitState is a platform feature (the japi hook writes it);
+        // Reforged's own native does not apply it, so SET calls on these two stock indices are routed
+        // to DzCompat_SetExtUnitState (-> BlzSetUnitMaxHP / BlzSetUnitMaxMana). GET stays the stock native.
+        if (!isGet) {
+            Long stockSet = extractMaxStateSetter(stateArg);
+            if (stockSet != null) idx = stockSet;
+        }
+        if (idx == null || (isStockIndex(idx) && !(!isGet && (idx == 1L || idx == 3L)))) {
             // This call itself isn't one to rewrite (stock 0-3, or a non-literal state
             // expression), but a nested call within its arguments might still have changed.
             if (!innerChanged) return null;
@@ -237,6 +245,14 @@ final class ExtendedUnitStateConverter {
             usedSet[0] = true;
             return "DzCompat_SetExtUnitState(" + effectiveUnitArg + ", " + idx + ", " + effectiveValueArg + ")";
         }
+    }
+
+    /** Returns 1 for UNIT_STATE_MAX_LIFE / ConvertUnitState(1) and 3 for UNIT_STATE_MAX_MANA / ConvertUnitState(3), else null. */
+    private static Long extractMaxStateSetter(String s) {
+        if (s.equals("UNIT_STATE_MAX_LIFE")) return 1L;
+        if (s.equals("UNIT_STATE_MAX_MANA")) return 3L;
+        Long n = extractConvertUnitStateLiteral(s);
+        return (n != null && (n == 1L || n == 3L)) ? n : null;
     }
 
     /** Returns N if {@code s} is exactly "ConvertUnitState(<integer literal>)", else null. */

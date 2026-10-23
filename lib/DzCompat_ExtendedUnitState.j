@@ -90,22 +90,43 @@
     // Always applies, even when both are back to 0, so that removing the last
     // active source correctly resets the unit to its true base cooldown
     // instead of leaving a stale override in place.
+    // Attack 2's TRUE base cooldown, captured once like the attack 1 one above (tag 9089). Index 0x38 (56)
+    // Set replaces it, so attack 2's interval and the rate of fire combine the same way attack 1's do.
+    function DzCompat_ExtStateGetFrozenBaseCooldown2 takes unit whichUnit returns real
+        local integer id = GetHandleId(whichUnit)
+        local real cached
+        if HaveSavedReal(gDzCompatUnitStateTable, id, 9089) then
+            return LoadReal(gDzCompatUnitStateTable, id, 9089)
+        endif
+        set cached = BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 1)
+        call SaveReal(gDzCompatUnitStateTable, id, 9089, cached)
+        return cached
+    endfunction
+
+    // Applies index 37's delta (attack 1 only) and index 81's rate of fire (the unit's global attack rate:
+    // the original field works on BOTH attacks) against each weapon's own frozen baseline:
+    //     attack 1: (frozenBase1 - delta37) / (1 + bonus81)
+    //     attack 2:  frozenBase2            / (1 + bonus81)
+    // A weapon the unit does not have (base cooldown 0) is skipped.
     function DzCompat_ExtStateApplyAttackSpeed takes unit whichUnit returns nothing
         local integer id = GetHandleId(whichUnit)
         local real frozenBase = DzCompat_ExtStateGetFrozenBaseCooldown(whichUnit)
+        local real frozenBase2 = DzCompat_ExtStateGetFrozenBaseCooldown2(whichUnit)
         local real delta37 = LoadReal(gDzCompatUnitStateTable, id, 9084)
         local real bonus81 = LoadReal(gDzCompatUnitStateTable, id, 9081)
         local real adjustedBase = frozenBase - delta37
-        if frozenBase <= 0 then
-            return // no real weapon on this unit - nothing to scale
-        endif
-        if adjustedBase <= 0.01 then
-            set adjustedBase = 0.01 // safety floor - never let index 37's own deltas reach/cross zero or negative
-        endif
         if bonus81 < 0 then
             set bonus81 = 0. // floating-point drift guard; never speed a unit below its adjusted base
         endif
-        call BlzSetUnitAttackCooldown(whichUnit, adjustedBase / (1.0 + bonus81), 0)
+        if frozenBase > 0 then
+            if adjustedBase <= 0.01 then
+                set adjustedBase = 0.01 // safety floor - never let index 37's own deltas reach/cross zero or negative
+            endif
+            call BlzSetUnitAttackCooldown(whichUnit, adjustedBase / (1.0 + bonus81), 0)
+        endif
+        if frozenBase2 > 0 then
+            call BlzSetUnitAttackCooldown(whichUnit, frozenBase2 / (1.0 + bonus81), 1)
+        endif
     endfunction
 
     // EVENT_PLAYER_UNIT_ATTACKED handler: Reforged resets a unit's cooldown to
@@ -195,6 +216,16 @@
         return IsUnitType(whichUnit, UNIT_TYPE_MELEE_ATTACKER) or IsUnitType(whichUnit, UNIT_TYPE_RANGED_ATTACKER)
     endfunction
 
+    // [LOCAL] Attack 2 damage bonus (0x33): like index 19 for attack 1, Reforged has no field for it, so a
+    // Set is stored (tag 9087, flag 9088) for Get read-back and min/max damage; it never changes combat.
+    function DzCompat_ExtStateGetBonus51 takes unit whichUnit returns real
+        local integer id = GetHandleId(whichUnit)
+        if HaveSavedBoolean(gDzCompatUnitStateTable, id, 9088) then
+            return LoadReal(gDzCompatUnitStateTable, id, 9087)
+        endif
+        return 0.
+    endfunction
+
     // States of the unit itself (0x50 armor type, 0x52 acquisition range, 0x53/0x54 life/mana
     // regeneration, 0x60 targeted as) and the other weapon-1 fields, all with a Reforged field.
     // Returns 0. for an index it does not know.
@@ -214,6 +245,9 @@
         elseif idx == 96 then
             // [REAL] 0x60 targeted as
             return I2R(BlzGetUnitIntegerField(whichUnit, UNIT_IF_TARGETED_AS))
+        elseif idx == 85 then
+            // [REAL] 0x55 minimum attack range
+            return BlzGetUnitRealField(whichUnit, UNIT_RF_MINIMUM_ATTACK_RANGE)
         elseif not DzCompat_ExtStateHasAttack(whichUnit) then
             return 0.
         elseif idx == 16 then
@@ -252,6 +286,47 @@
         elseif idx == 87 then
             // [REAL] 0x57 attack 1 spill radius
             return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_RADIUS, 0)
+        // ---- Attack 2 (Reforged weapon index 1) [UNVERIFIED in game] -------------------------
+        elseif idx == 48 then
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 1))
+        elseif idx == 49 then
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 1))
+        elseif idx == 50 then
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 1))
+        elseif idx == 51 then
+            // [LOCAL] 0x33 attack 2 damage bonus
+            return DzCompat_ExtStateGetBonus51(whichUnit)
+        elseif idx == 52 then
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_LOSS_FACTOR, 1)
+        elseif idx == 53 then
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_WEAPON_SOUND, 1))
+        elseif idx == 54 then
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_ATTACK_TYPE, 1))
+        elseif idx == 55 then
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_MAXIMUM_NUMBER_OF_TARGETS, 1))
+        elseif idx == 56 then
+            // [APPROX] 0x38 attack 2 interval: the frozen baseline (see DzCompat_ExtStateGetFrozenBaseCooldown2)
+            return DzCompat_ExtStateGetFrozenBaseCooldown2(whichUnit)
+        elseif idx == 57 then
+            // 0x39 attack 2 initial delay = damage point
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_POINT, 1)
+        elseif idx == 66 then
+            // [APPROX] 0x42 attack 2 min damage = base + dice + bonus
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 1) + BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 1)) + DzCompat_ExtStateGetBonus51(whichUnit)
+        elseif idx == 67 then
+            // [APPROX] 0x43 attack 2 max damage = base + dice * sides + bonus
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 1) + (BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 1) * BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 1))) + DzCompat_ExtStateGetBonus51(whichUnit)
+        elseif idx == 68 then
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BACKSWING_POINT, 1)
+        elseif idx == 69 then
+            return I2R(BlzGetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_TARGETS_ALLOWED, 1))
+        elseif idx == 70 then
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_DISTANCE, 1)
+        elseif idx == 71 then
+            return BlzGetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_RADIUS, 1)
+        // ---- [LOCAL] no Reforged field: 0x27/0x41 range buffer, 0x58/0x59 weapon type -------
+        elseif idx == 39 or idx == 65 or idx == 88 or idx == 89 then
+            return LoadReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9100 + idx)
         endif
         return 0.
     endfunction
@@ -269,6 +344,8 @@
             call BlzSetUnitRealField(whichUnit, UNIT_RF_MANA_REGENERATION, value)
         elseif idx == 96 then
             call BlzSetUnitIntegerField(whichUnit, UNIT_IF_TARGETED_AS, R2I(value))
+        elseif idx == 85 then
+            call BlzSetUnitRealField(whichUnit, UNIT_RF_MINIMUM_ATTACK_RANGE, value)
         elseif not DzCompat_ExtStateHasAttack(whichUnit) then
             return
         elseif idx == 16 then
@@ -293,6 +370,49 @@
             call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_DISTANCE, 0, value)
         elseif idx == 87 then
             call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_RADIUS, 0, value)
+        // ---- Attack 2 (Reforged weapon index 1) [UNVERIFIED in game] -------------------------
+        elseif idx == 48 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_NUMBER_OF_DICE, 1, R2I(value))
+        elseif idx == 49 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_SIDES_PER_DIE, 1, R2I(value))
+        elseif idx == 50 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 1, R2I(value))
+        elseif idx == 51 then
+            // [LOCAL] 0x33 attack 2 damage bonus: stored for read-back only
+            call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9087, value)
+            call SaveBoolean(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9088, true)
+        elseif idx == 52 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_LOSS_FACTOR, 1, value)
+        elseif idx == 53 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_WEAPON_SOUND, 1, R2I(value))
+        elseif idx == 54 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_ATTACK_TYPE, 1, R2I(value))
+        elseif idx == 55 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_MAXIMUM_NUMBER_OF_TARGETS, 1, R2I(value))
+        elseif idx == 56 then
+            // [APPROX] 0x38 attack 2 interval: becomes the new frozen baseline; the rate of fire (0x51)
+            // is re-applied on top of it, as for attack 1.
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BASE_COOLDOWN, 1, value)
+            call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9089, value)
+            call SaveBoolean(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9082, true)
+            call DzCompat_ExtStateEnsureAttackSpeedHook()
+            call DzCompat_ExtStateApplyAttackSpeed(whichUnit)
+        elseif idx == 57 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_POINT, 1, value)
+        elseif idx == 66 or idx == 67 then
+            // 0x42 / 0x43 attack 2 min / max damage are READ ONLY (the japi swallows the write, as for 0x14 / 0x15)
+            return
+        elseif idx == 68 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_BACKSWING_POINT, 1, value)
+        elseif idx == 69 then
+            call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_TARGETS_ALLOWED, 1, R2I(value))
+        elseif idx == 70 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_DISTANCE, 1, value)
+        elseif idx == 71 then
+            call BlzSetUnitWeaponRealField(whichUnit, UNIT_WEAPON_RF_ATTACK_DAMAGE_SPILL_RADIUS, 1, value)
+        // ---- [LOCAL] no Reforged field: stored for read-back only ---------------------------
+        elseif idx == 39 or idx == 65 or idx == 88 or idx == 89 then
+            call SaveReal(gDzCompatUnitStateTable, GetHandleId(whichUnit), 9100 + idx, value)
         endif
     endfunction
 
@@ -346,7 +466,13 @@
 
     function DzCompat_SetExtUnitState takes unit whichUnit, integer idx, real value returns nothing
         local integer id
-        if idx == 18 then
+        if idx == 1 then
+            // [REAL] UNIT_STATE_MAX_LIFE write (the japi hook applies it; Reforged's SetUnitState does not)
+            call BlzSetUnitMaxHP(whichUnit, R2I(value))
+        elseif idx == 3 then
+            // [REAL] UNIT_STATE_MAX_MANA write
+            call BlzSetUnitMaxMana(whichUnit, R2I(value))
+        elseif idx == 18 then
             // [REAL] 0x12 Attack 1 base damage
             call BlzSetUnitWeaponIntegerField(whichUnit, UNIT_WEAPON_IF_ATTACK_DAMAGE_BASE, 0, R2I(value))
         elseif idx == 19 then
