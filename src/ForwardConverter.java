@@ -357,6 +357,16 @@ final class ForwardConverter {
             }
         }
 
+        // Cast range restore for ability.ini abilities that have no Rng line (see CastRangeRegistry).
+        List<String> castRangeLines = Collections.emptyList();
+        if (slkTableDir != null) {
+            castRangeLines = CastRangeRegistry.buildRegistry(slkTableDir, logger);
+            if (!castRangeLines.isEmpty()) {
+                neededNames.add("DzCompat_CastRangePut");
+                neededNames.add("DzCompat_CastRangeStart");
+            }
+        }
+
         // Parse all lib files. Keep both a name->segment map and a flat list in
         // library-file order so we can emit only the needed functions while
         // preserving the dependency-safe order the .j files were written in.
@@ -528,6 +538,10 @@ final class ForwardConverter {
                     finalOutput.add("");
                     finalOutput.addAll(abilityDataFieldLines);
                 }
+                if (!castRangeLines.isEmpty()) {
+                    finalOutput.add("");
+                    finalOutput.addAll(castRangeLines);
+                }
                 finalOutput.add(DzMarkers.END);
                 continue;
             }
@@ -598,6 +612,18 @@ final class ForwardConverter {
             } else {
                 logger.log("[" + Timestamps.now() + "] WARNING: function main not found - call " +
                            "ExecuteFunc(\"" + AbilityHotkeyRegistry.INIT_FUNCTION + "\") once at map init yourself");
+            }
+        }
+
+        // Same for the baked cast range fix.
+        if (!castRangeLines.isEmpty()) {
+            if (JassScript.injectStatementIntoMain(finalOutput,
+                    "call ExecuteFunc(\"" + CastRangeRegistry.INIT_FUNCTION + "\")")) {
+                logger.log("[" + Timestamps.now() + "] Injected " + castRangeLines.size() +
+                           " lines for the ability cast range fix");
+            } else {
+                logger.log("[" + Timestamps.now() + "] WARNING: function main not found - call " +
+                           "ExecuteFunc(\"" + CastRangeRegistry.INIT_FUNCTION + "\") once at map init yourself");
             }
         }
 
