@@ -1,4 +1,6 @@
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -69,32 +71,161 @@ final class ModelPathRegistry {
     }
 
 
+    /** The character Model_Encrypt (sumneko/Model_Encrypt) appends to a model name: "%s体". */
+    private static final String ENCRYPT_SUFFIX = "\u4F53";
+    /** The same character as UTF-8 bytes (E4 BD 93), one char per byte - the tool edits the map byte for byte. */
+    private static final String ENCRYPT_SUFFIX_BYTES = "\u00E4\u00BD\u0093";
+
+    /** Strip one trailing .mdl / .mdx (case-insensitive); a path with no model extension is left alone. */
+    private static String stripModelExtension(String path) {
+        int n = path.length();
+        if (n >= 4 && path.charAt(n - 4) == '.') {
+            char a = Character.toLowerCase(path.charAt(n - 3));
+            char b = Character.toLowerCase(path.charAt(n - 2));
+            char c = Character.toLowerCase(path.charAt(n - 1));
+            if (a == 'm' && b == 'd' && (c == 'l' || c == 'x')) {
+                return path.substring(0, n - 4);
+            }
+        }
+        return path;
+    }
+
+    /**
+     * Shared normalisation: trim, / becomes \, runs of backslashes collapse (unit files are
+     * sometimes written with doubled ones), case-insensitive, and the .mdl/.mdx extension
+     * is dropped so both spellings - and a path written with no extension at all, which the
+     * game completes itself - give the same key.
+     *
+     * @param asciiOnly lower-case A-Z only. Used for byte strings (one char per byte):
+     *                  a locale lower-case would also rewrite bytes 0xC0-0xDE and could
+     *                  make two different byte sequences collide.
+     */
+    private static String normalizeModelPath(String path, boolean asciiOnly) {
+        String k = path.trim().replace('/', '\\').replaceAll("\\\\+", "\\\\");
+        if (asciiOnly) {
+            StringBuilder sb = new StringBuilder(k.length());
+            for (int i = 0; i < k.length(); i++) {
+                char c = k.charAt(i);
+                sb.append(c >= 'A' && c <= 'Z' ? (char) (c + 32) : c);
+            }
+            k = sb.toString();
+        } else {
+            k = k.toLowerCase(Locale.ROOT);
+        }
+        return stripModelExtension(k);
+    }
+
     /**
      * Key used to match a script path against a unit.ini / UnitStrings path:
      * case-insensitive, / and \ treated alike, runs of backslashes collapsed
-     * (unit files are sometimes written with doubled ones) and .mdl/.mdx treated
-     * as the same file (the game loads either for a reference to the other).
+     * and .mdl/.mdx treated as the same file (the game loads either for a reference
+     * to the other). Works on decoded text; see {@link #modelPathByteKey}
+     * for the encoding-independent twin.
      */
     static String modelPathKey(String path) {
-        String k = path.trim().replace('/', '\\').replaceAll("\\\\+", "\\\\");
-        k = k.toLowerCase(Locale.ROOT);
-        if (k.endsWith(".mdl") || k.endsWith(".mdx")) {
-            k = k.substring(0, k.length() - 4);
+        return normalizeModelPath(path, false);
+    }
+
+    /**
+     * Encoding-independent key: the path as the bytes it has in the script file
+     * (re-encoded with the charset the script was decoded with), one char per byte,
+     * normalised like {@link #modelPathKey}. Mixed-encoding names (part GBK, part
+     * UTF-8, as some map protectors write them) decode differently depending on which
+     * charset the sniffer picks for which file; compared as raw bytes they still match.
+     */
+    static String modelPathByteKey(String path, Charset scriptCharset) {
+        Charset cs = scriptCharset != null ? scriptCharset : StandardCharsets.UTF_8;
+        return normalizeModelPath(new String(path.getBytes(cs), StandardCharsets.ISO_8859_1), true);
+    }
+
+    /** modelPathKey with a trailing Model_Encrypt marker removed, or null if it has none. */
+    private static String withoutEncryptSuffix(String key) {
+        return key.endsWith(ENCRYPT_SUFFIX) ? key.substring(0, key.length() - ENCRYPT_SUFFIX.length()) : null;
+    }
+
+    private static String withoutEncryptSuffixBytes(String byteKey) {
+        return byteKey.endsWith(ENCRYPT_SUFFIX_BYTES)
+                ? byteKey.substring(0, byteKey.length() - ENCRYPT_SUFFIX_BYTES.length()) : null;
+    }
+
+    /**
+     * path key -> skin id, in tiers so the most exact match always wins:
+     * decoded-text key, then raw-byte key, then either with the Model_Encrypt
+     * suffix (体) removed from one side. The last tier lets a script that
+     * names "foo体.mdl" find the catalog's plain "foo.mdl" (an unencrypted export of
+     * the same map) and the other way round; it is never allowed to override a
+     * real match.
+     */
+    static final class SkinIndex {
+        private final Map<String, String> text = new HashMap<>();
+        private final Map<String, String> bytes = new HashMap<>();
+        private final Map<String, String> textAlias = new HashMap<>();
+        private final Map<String, String> bytesAlias = new HashMap<>();
+
+        /** @return true if the key was new */
+        boolean addTextKey(String key, String skin) {
+            String bare = withoutEncryptSuffix(key);
+            if (bare != null) textAlias.putIfAbsent(bare, skin);
+            return text.putIfAbsent(key, skin) == null;
         }
-        return k;
+
+        boolean addByteKey(String key, String skin) {
+            String bare = withoutEncryptSuffixBytes(key);
+            if (bare != null) bytesAlias.putIfAbsent(bare, skin);
+            return bytes.putIfAbsent(key, skin) == null;
+        }
+
+        String find(String path, Charset scriptCharset) {
+            String tk = modelPathKey(path);
+            String bk = modelPathByteKey(path, scriptCharset);
+            String skin = text.get(tk);
+            if (skin == null) skin = bytes.get(bk);
+            if (skin != null) return skin;
+            // Encrypted script path, plain catalog
+            String bareT = withoutEncryptSuffix(tk);
+            String bareB = withoutEncryptSuffixBytes(bk);
+            if (bareT != null) skin = text.get(bareT);
+            if (skin == null && bareB != null) skin = bytes.get(bareB);
+            if (skin != null) return skin;
+            // Plain script path, encrypted catalog
+            skin = textAlias.get(tk);
+            if (skin == null) skin = bytesAlias.get(bk);
+            return skin;
+        }
     }
 
     /**
      * Parse unit.ini / UnitStrings-style text: [SkinId] blocks and file= model paths.
      * Skin ids are case-sensitive. Returns path -> skinId (4-char or longer section name).
+     *
+     * The file is decoded like every other table file (strict UTF-8, otherwise the
+     * encoding sniffer), so a unit.ini that is not valid UTF-8 - GBK names, or names
+     * that mix GBK and UTF-8 - is read instead of failing. The raw-byte view of the
+     * same file is {@link #parseUnitModelFileRaw}.
      */
     static Map<String, String> parseUnitModelFile(Path file, Logger logger) throws IOException {
+        Map<String, String> pathToSkin = parseUnitModelLines(SlkTableRegistry.readIni(file, logger));
+        logger.log("[" + Timestamps.now() + "] Parsed " + pathToSkin.size() +
+                   " model path(s) from " + file.getFileName());
+        return pathToSkin;
+    }
+
+    /**
+     * Same parse over the file's bytes, one char per byte (ISO-8859-1), so the paths
+     * come back exactly as stored whatever their encoding - see {@link #modelPathByteKey}.
+     */
+    static Map<String, String> parseUnitModelFileRaw(Path file) throws IOException {
+        String text = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
+        if (text.startsWith("\u00EF\u00BB\u00BF")) text = text.substring(3); // UTF-8 BOM
+        return parseUnitModelLines(java.util.Arrays.asList(
+                text.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1)));
+    }
+
+    private static Map<String, String> parseUnitModelLines(List<String> lines) {
         Map<String, String> pathToSkin = new LinkedHashMap<>();
-        List<String> lines = Files.readAllLines(file);
         String currentId = null;
         // [H000] or [E001] — preserve case
         Pattern section = Pattern.compile("^\\s*\\[([^\\]]+)\\]\\s*$");
-        // file = "..." or file=... or File = ...
         // file = "path.mdl"  |  file=path  |  file:hd=path (skin txt)
         Pattern fileKey = Pattern.compile(
                 "^\\s*file(?:\\s*:\\s*hd)?\\s*=\\s*\"([^\"]+)\"\\s*$",
@@ -132,8 +263,6 @@ final class ModelPathRegistry {
                 }
             }
         }
-        logger.log("[" + Timestamps.now() + "] Parsed " + pathToSkin.size() +
-                   " model path(s) from " + file.getFileName());
         return pathToSkin;
     }
 
@@ -160,6 +289,12 @@ final class ModelPathRegistry {
     /** Catalog file names to auto-load from the map table folder, besides unit.ini itself. */
     private static final String UNIT_STRINGS_SUFFIX = "unitstrings.txt";
 
+    /** The catalog files read both ways: decoded text and raw bytes (see modelPathByteKey). */
+    private static final class Catalog {
+        final Map<String, String> text = new LinkedHashMap<>();
+        final Map<String, String> raw = new LinkedHashMap<>();
+    }
+
     /**
      * Automatically collect the unit.ini / *UnitStrings.txt catalog file(s) sitting in
      * the map table folder (no prompt): the map's own unit.ini (in case it also
@@ -169,13 +304,13 @@ final class ModelPathRegistry {
      *
      * @param tableDir the map table folder (same one used for the umdl lookup and the
      *                 EXExecuteScript bake), or null when there is none
-     * @return path -> skin id, merged across every catalog file found; empty (never
-     *         null) when tableDir is null or no matching file is found
+     * @return the catalog merged across every file found; empty (never null) when
+     *         tableDir is null or no matching file is found
      */
-    private static Map<String, String> loadCatalogFromTableFolder(Path tableDir, Logger logger) {
-        Map<String, String> pathToSkin = new LinkedHashMap<>();
+    private static Catalog loadCatalogFromTableFolder(Path tableDir, Logger logger) {
+        Catalog catalog = new Catalog();
         if (tableDir == null) {
-            return pathToSkin;
+            return catalog;
         }
         Map<String, Path> files = SlkTableRegistry.listIniFiles(tableDir, logger);
         List<Path> catalogFiles = new ArrayList<>();
@@ -191,13 +326,16 @@ final class ModelPathRegistry {
         for (Path file : catalogFiles) {
             try {
                 for (Map.Entry<String, String> e : parseUnitModelFile(file, logger).entrySet()) {
-                    pathToSkin.putIfAbsent(e.getKey(), e.getValue());
+                    catalog.text.putIfAbsent(e.getKey(), e.getValue());
+                }
+                for (Map.Entry<String, String> e : parseUnitModelFileRaw(file).entrySet()) {
+                    catalog.raw.putIfAbsent(e.getKey(), e.getValue());
                 }
             } catch (IOException e) {
                 logger.log("[" + Timestamps.now() + "] ERROR reading unit data: " + e.getMessage());
             }
         }
-        return pathToSkin;
+        return catalog;
     }
 
     /**
@@ -215,28 +353,36 @@ final class ModelPathRegistry {
      *                        always a valid BlzSetUnitSkin skinId; checked first. May be
      *                        empty (no table folder, no unit.ini, no umdl matches) -
      *                        never null.
+     * @param scriptCharset   the charset the script was decoded with (and is written back
+     *                        with); used for the raw-byte comparison. Null means UTF-8.
      */
     static List<String> buildRegistry(List<String> jassScript, Path tableDir,
-                                       Map<String, String> tableModelPaths, Logger logger) {
+                                       Map<String, String> tableModelPaths,
+                                       Charset scriptCharset, Logger logger) {
         LinkedHashSet<String> scriptPaths = extractDzSetUnitModelPaths(jassScript);
         logger.log("[" + Timestamps.now() + "] DzSetUnitModel detected; found " +
                    scriptPaths.size() + " model path literal(s) in script");
 
-        Map<String, String> pathToSkin = loadCatalogFromTableFolder(tableDir, logger);
+        Catalog catalog = loadCatalogFromTableFolder(tableDir, logger);
 
         // Only paths that are actually passed to DzSetUnitModel are registered; every
         // other model path in either source is ignored. The map's own object data
         // (tableModelPaths, already keyed by modelPathKey) is checked first - it is
         // always a valid skin id, since its rawcode is a unit type this map already
         // has. The unit.ini / UnitStrings catalog fills in whatever is left.
-        Map<String, String> skinByKey = new HashMap<>();
+        SkinIndex index = new SkinIndex();
         int fromTable = 0;
         for (Map.Entry<String, String> e : tableModelPaths.entrySet()) {
-            if (skinByKey.putIfAbsent(e.getKey(), e.getValue()) == null) fromTable++;
+            if (index.addTextKey(e.getKey(), e.getValue())) fromTable++;
         }
         int fromCatalog = 0;
-        for (Map.Entry<String, String> e : pathToSkin.entrySet()) {
-            if (skinByKey.putIfAbsent(modelPathKey(e.getKey()), e.getValue()) == null) fromCatalog++;
+        for (Map.Entry<String, String> e : catalog.text.entrySet()) {
+            if (index.addTextKey(modelPathKey(e.getKey()), e.getValue())) fromCatalog++;
+        }
+        // Raw-byte twin of the catalog: still matches when the script and the catalog
+        // were decoded with different charsets (mixed GBK/UTF-8 names).
+        for (Map.Entry<String, String> e : catalog.raw.entrySet()) {
+            index.addByteKey(modelPathByteKey(e.getKey(), StandardCharsets.ISO_8859_1), e.getValue());
         }
         if (fromTable > 0 || fromCatalog > 0) {
             logger.log("[" + Timestamps.now() + "] Model path -> skin id: " + fromTable +
@@ -250,13 +396,38 @@ final class ModelPathRegistry {
             return Collections.emptyList();
         }
 
+        // Resolve every path first; the ones with no skin id get a new custom unit
+        // (UnitModelPatcher writes them to unit_patched.ini) so they are not left at 0.
+        Map<String, String> skinByPath = new LinkedHashMap<>();
+        Map<String, String> unresolved = new LinkedHashMap<>(); // byte key -> first path literal
+        for (String path : pathsToRegister) {
+            String skin = index.find(path, scriptCharset);
+            if (skin != null) {
+                skinByPath.put(path, skin);
+            } else if (!path.trim().isEmpty()) {
+                unresolved.putIfAbsent(modelPathByteKey(path, scriptCharset), path);
+            }
+        }
+        int patched = 0;
+        if (!unresolved.isEmpty()) {
+            Map<String, String> created =
+                    UnitModelPatcher.patch(tableDir, jassScript, unresolved, scriptCharset, logger);
+            for (String path : pathsToRegister) {
+                String id = created.get(modelPathByteKey(path, scriptCharset));
+                if (id != null && !skinByPath.containsKey(path)) {
+                    skinByPath.put(path, id);
+                    patched++;
+                }
+            }
+        }
+
         List<String> out = new ArrayList<>();
         out.add("// ---- DzSetUnitModel path -> skin registry (auto-generated) ----");
         out.add("// Called from main() when present; skin ids are case-sensitive rawcodes.");
         out.add("function DzCompat_InitModelPaths takes nothing returns nothing");
         int withId = 0;
         for (String path : pathsToRegister) {
-            String skin = skinByKey.get(modelPathKey(path));
+            String skin = skinByPath.get(path);
             if (skin != null) {
                 withId++;
             }
@@ -266,7 +437,8 @@ final class ModelPathRegistry {
         out.add("endfunction");
 
         logger.log("[" + Timestamps.now() + "] Model path registry: " + pathsToRegister.size() +
-                   " path(s), " + withId + " with skin id, " +
+                   " path(s), " + withId + " with skin id (" + patched + " from new units in " +
+                   UnitModelPatcher.PATCHED_FILE_NAME + "), " +
                    (pathsToRegister.size() - withId) + " with empty id (0)");
         return out;
     }
