@@ -15,7 +15,6 @@
 //   [PORT LIMITATION] - function has limitations that have no known solution
 // ============================================================================
 
-
     globals
         constant integer DZCOMPAT_MAX_FRAMES = 8192
         framehandle array gDzCompatFrame
@@ -25,6 +24,21 @@
         // Name+context lookup so DzFrameFindByName
         // is reliable even for frames created outside this shim.
         hashtable gDzCompatNameContext = InitHashtable()
+
+        // Frame tree bookkeeping. A real engine frame frees all of its children when it is
+        // destroyed, so every Dz id whose frame lives under a shim-created parent must be
+        // invalidated together with that parent; otherwise later calls on the child id
+        // (DzFrameShow / DzDestroyFrame / ...) reach a freed engine object and crash the game.
+        // parent id -> (0 = child count, 1..n = child ids); child id -> (-1 = parent id)
+        hashtable gDzCompatFrameChildren = InitHashtable()
+        integer array gDzCompatDestroyQueue
+    // Frames queued by DzDestroyFrame; the engine-side destroy is deferred (see DzCompat_DeferDestroyFrame)
+    framehandle array gDzCompatReapFrame
+    integer array gDzCompatReapAge
+    integer gDzCompatReapCount = 0
+    timer gDzCompatReapTimer = null
+    constant real DZCOMPAT_REAP_PERIOD = 0.1
+    constant integer DZCOMPAT_REAP_TICKS = 5
 
         // Name -> trigger registration table for the string-based
         // DzFrameSetScript variants. JASS can't resolve "a function by this
@@ -49,10 +63,51 @@
         // Cached GameUI origin frame (see DzCompat_GetGameUI).
         framehandle gDzCompatGameUI = null
     	framehandle gDzStableParent = null
-        // one-shot guard for the optional placement tests (DZCOMPAT_DEBUG_SCREEN)
-        boolean gDzCompatDbgDone = false
-        integer gDzCompatDbgLog = 0
         framehandle gDzCompatEdgeOwner = null
+        // Per frame id (gDzCompatFrameGeo): 0 width, 1 height (as the map requested them), 3 Dz anchor point,
+        // 4 x, 5 y, 6 "anchored with DzFrameSetAbsolutePoint", 7 "moved from the edge owner to the GameUI so it
+        // draws over the console", 8 "registered as a console cover", 9 "centred on the GameUI (DzFrameSetPoint
+        // point 4 -> GameUI point 4, 0, 0)", 10 "text frame", 12 "index + 1 in the squeezed-panel list".
+        hashtable gDzCompatFrameGeo = InitHashtable()
+        // With DZCOMPAT_EDGE_SHIFT the frames are no longer children of the GameUI. A child of the GameUI that
+        // sticks out of the 4:3 area is SQUEEZED into it (not cropped), any other parent draws it at its natural
+        // size. Maps made for KK are laid out for the squeezed look, so with the edge owner some frames come out
+        // too big and the frames placed on them no longer fit. DZCOMPAT_EDGE_FIT repeats the squeeze where the
+        // layout needs it (see DzCompat_AbsApply).
+        constant boolean DZCOMPAT_EDGE_FIT = true
+        // The edge owner is drawn UNDER the console art (HumanUITile01-04, InventoryCover, ...). With
+        // DZCOMPAT_EDGE_COVER_CONSOLE a frame that covers the whole bottom console bar (x 0..0.8, y 0..0.13) is
+        // moved to the GameUI instead (clipped to 4:3, not shifted), which draws over the console but ALSO over
+        // every frame left on the edge owner. Off by default: the console art is hidden instead (see below).
+        constant boolean DZCOMPAT_EDGE_COVER_CONSOLE = false
+        constant real DZCOMPAT_CONSOLE_COVER_X0 = 0.01
+        constant real DZCOMPAT_CONSOLE_COVER_X1 = 0.79
+        constant real DZCOMPAT_CONSOLE_COVER_Y0 = 0.01
+        constant real DZCOMPAT_CONSOLE_COVER_Y1 = 0.13
+        // Large panels and full-screen backdrops (area >= DZCOMPAT_COVER_MIN_AREA, overlapping the console art)
+        // cannot be drawn over the console and stay unclipped at the same time, so while one of them is visible
+        // the console art (ConsoleTopBar, ConsoleBottomBar, SimpleInventoryCover) is hidden. Set
+        // DZCOMPAT_EDGE_HIDE_CONSOLE to false to keep the console art always visible.
+        constant boolean DZCOMPAT_EDGE_HIDE_CONSOLE = true
+        // Also hide the minimap and its buttons, the Info/Menu/Allies/Log buttons and the resource indicators.
+        constant boolean DZCOMPAT_COVER_HIDE_HUD = true
+        constant real DZCOMPAT_COVER_MIN_AREA = 0.1
+        constant real DZCOMPAT_COVER_PERIOD = 0.1
+        constant real DZCOMPAT_CONSOLE_BOTTOM_TOP = 0.2558
+        constant real DZCOMPAT_CONSOLE_TOP_BOTTOM = 0.568
+        integer array gDzCompatCoverId
+        integer gDzCompatCoverCount = 0
+        boolean array gDzCompatCoverHid
+        timer gDzCompatCoverTimer = null
+        integer array gDzCompatPanelFrame
+        real array gDzCompatPanelA
+        real array gDzCompatPanelB
+        real array gDzCompatPanelNA
+        real array gDzCompatPanelNB
+        real array gDzCompatPanelY0
+        real array gDzCompatPanelY1
+        integer gDzCompatPanelCount = 0
+
         // [DESYNC FIX] counter for nameless frames (was GetRandomInt, which advances the shared RNG)
         integer gDzCompatFrameGenCount = 0
 
@@ -116,11 +171,6 @@
         // Reforged (it still reports mouse enter/leave); GLUETEXTBUTTON does. When true,
         // DzCreateFrameByTagName falls back to GLUETEXTBUTTON for such a BUTTON.
         constant boolean DZCOMPAT_BUTTON_AS_GLUE_BUTTON = true
-        // Placement tests for the screen-edge fix: when true, the first time a map anchors a
-        // frame to the GameUI this prints the client size, the margin in use and a legend, draws
-        // the test strips (see DzCompat_DebugScreenTests) and logs the first anchors the map sets.
-        // The lines stay on screen for a minute. Leave false in releases.
-        constant boolean DZCOMPAT_DEBUG_SCREEN = false
         // The screen-edge fix. A frame whose parent is the GameUI is not drawn once it lies outside
         // the 4:3 area, so with this on (1) a Dz anchor to the GameUI is widened by the margin the
         // real screen has beside the 4:3 area (DzCompat_AnchorX), (2) frames the map creates under
@@ -153,6 +203,51 @@
 		// [APPROX] but real for exactly the frames a map wires up for hover - the only
 		// ones "focus" is ever likely to be asked about.
 		integer gDzCompatMouseFocusId = 0
+    // CLICKFIX_MODE 3: clear the clicked frame's focus 0.05s after the click, outside the click event
+    framehandle array gDzCompatFixFrame
+    integer gDzCompatFixCount = 0
+    timer gDzCompatFixTimer = null
+    // HOVER VIA TOOLTIP: Reforged has a long-standing engine bug (reported since 1.33) where script-registered
+    // MOUSE_ENTER / MOUSE_LEAVE on glue buttons loop forever and make the cursor jump. With this on, hover is
+    // detected without those events: every hover-registered frame gets an invisible tooltip frame, the engine
+    // shows it while the frame is hovered, and a poll timer turns its visibility changes into ENTER / LEAVE.
+    constant boolean DZCOMPAT_HOVER_VIA_TOOLTIP = true
+    framehandle array gDzCompatHoverTip
+    hashtable gDzCompatHoverState = InitHashtable()
+    integer array gDzCompatHoverWatchId
+    integer gDzCompatHoverWatchCount = 0
+    timer gDzCompatHoverPollTimer = null
+    // A LEAVE only counts as real once no further LEAVE for the same frame arrives within this many seconds:
+    // while the cursor sits on a hover-registered frame Reforged keeps sending LEAVE every ~0.1s.
+    constant real DZCOMPAT_HOVER_LEAVE_QUIET = 0.3
+    timer gDzCompatHoverClock = null
+    // HOVER ONE-SHOT: Reforged keeps re-firing LEAVE/ENTER on a frame that has a script-registered
+    // MOUSE_ENTER while the cursor sits on it, and the cursor flickers with it. With this on, a frame's
+    // ENTER registration is dropped right after it fires and re-created when the mouse leaves.
+    constant boolean DZCOMPAT_HOVER_ONESHOT = false
+    // 0 = disable/enable the clicked frame (flips the engine hover state once per click),
+    // 1 = nothing, 3 = clear the frame's keyboard focus 0.05s after the click (default; clearing it inside the click event breaks later calls on frames that have a tooltip)
+    constant integer DZCOMPAT_CLICKFIX_MODE = 3
+    code gDzCompatHoverRelayCode
+    code gDzCompatHoverEnterCode
+    integer array gDzCompatHoverDisarmId
+    integer gDzCompatHoverDisarmCount = 0
+    timer gDzCompatHoverDisarmTimer = null
+    // DzFrameSetSize coalescing: several resizes of one frame in the same tick collapse into the
+    // last one, and a resize that leaves the size unchanged is dropped. In Reforged every
+    // BlzFrameSetSize relayouts the frame and re-fires MOUSE_LEAVE/MOUSE_ENTER while the cursor is over it.
+    // Map hover handlers that resize in response (via DzSyncData round trips) therefore loop forever.
+    // keys per frame id: 0/1 = last applied w/h, 2/3 = pending w/h, boolean 4 = pending
+    hashtable gDzCompatSizeCache = InitHashtable()
+    integer array gDzCompatSizePendingId
+    integer gDzCompatSizePendingCount = 0
+    timer gDzCompatSizeTimer = null
+    hashtable gDzCompatHoverPending = InitHashtable()
+    integer array gDzCompatHoverPendingId
+    integer gDzCompatHoverPendingCount = 0
+    timer gDzCompatHoverFlushTimer = null
+    boolean gDzCompatHoverOverride = false
+    integer gDzCompatHoverOverrideId = 0
     endglobals
 
     // ---- internal focus-tracking helper ----
@@ -194,6 +289,163 @@
             return null
         endif
         return gDzCompatFrame[id]
+    endfunction
+
+    function DzCompat_HoverRearm takes integer id returns nothing
+        local framehandle f = DzCompat_GetFrame(id)
+        local trigger t
+        if not DZCOMPAT_HOVER_ONESHOT or f == null or gDzCompatHoverRelayCode == null or gDzCompatHoverEnterCode == null then
+            set f = null
+            return
+        endif
+        if LoadTriggerHandle(gDzCompatFrameEvt, id, 2) != null or LoadTriggerHandle(gDzCompatFrameEvt, id, 22) == null then
+            set f = null
+            return
+        endif
+        set t = CreateTrigger()
+        call TriggerAddAction(t, gDzCompatHoverEnterCode)
+        call TriggerAddAction(t, gDzCompatHoverRelayCode)
+        call BlzTriggerRegisterFrameEvent(t, f, ConvertFrameEventType(2))
+        call SaveTriggerHandle(gDzCompatFrameEvt, id, 2, t)
+        set t = null
+        set f = null
+    endfunction
+
+    function DzCompat_HoverDisarmFlush takes nothing returns nothing
+        local integer i = 0
+        local integer n = gDzCompatHoverDisarmCount
+        local integer id
+        local trigger t
+        set gDzCompatHoverDisarmCount = 0
+        loop
+            exitwhen i >= n
+            set id = gDzCompatHoverDisarmId[i]
+            set t = LoadTriggerHandle(gDzCompatFrameEvt, id, 2)
+            if t != null and DzCompat_GetFrame(id) != null then
+                call DestroyTrigger(t)
+                call RemoveSavedHandle(gDzCompatFrameEvt, id, 2)
+            endif
+            set i = i + 1
+        endloop
+        set t = null
+    endfunction
+
+    // Record that frame id `child` was created under the shim-created frame id `parent`.
+    function DzCompat_FrameAddChild takes integer parent, integer child returns nothing
+        local integer n
+        if parent <= 0 or child <= 0 or parent == child then
+            return
+        endif
+        set n = LoadInteger(gDzCompatFrameChildren, parent, 0) + 1
+        call SaveInteger(gDzCompatFrameChildren, parent, 0, n)
+        call SaveInteger(gDzCompatFrameChildren, parent, n, child)
+        call SaveInteger(gDzCompatFrameChildren, child, -1, parent)
+    endfunction
+
+    // Forget that `child` hangs under its recorded parent (used by DzFrameSetParent).
+    function DzCompat_FrameRemoveChild takes integer child returns nothing
+        local integer parent = LoadInteger(gDzCompatFrameChildren, child, -1)
+        local integer n
+        local integer i = 1
+        if parent <= 0 then
+            return
+        endif
+        set n = LoadInteger(gDzCompatFrameChildren, parent, 0)
+        loop
+            exitwhen i > n
+            if LoadInteger(gDzCompatFrameChildren, parent, i) == child then
+                call SaveInteger(gDzCompatFrameChildren, parent, i, 0)
+                exitwhen true
+            endif
+            set i = i + 1
+        endloop
+        call RemoveSavedInteger(gDzCompatFrameChildren, child, -1)
+    endfunction
+
+    // Destroy ONE frame id and drop every table entry that refers to it. Callers must have
+    // already released its descendants (see DzDestroyFrame).
+    function DzCompat_ReapTick takes nothing returns nothing
+        local integer i = 0
+        local integer j = 0
+        loop
+            exitwhen i >= gDzCompatReapCount
+            set gDzCompatReapAge[i] = gDzCompatReapAge[i] - 1
+            if gDzCompatReapAge[i] <= 0 then
+                call BlzDestroyFrame(gDzCompatReapFrame[i])
+                set gDzCompatReapFrame[i] = null
+            else
+                if i != j then
+                    set gDzCompatReapFrame[j] = gDzCompatReapFrame[i]
+                    set gDzCompatReapAge[j] = gDzCompatReapAge[i]
+                    set gDzCompatReapFrame[i] = null
+                endif
+                set j = j + 1
+            endif
+            set i = i + 1
+        endloop
+        set gDzCompatReapCount = j
+        if j == 0 and gDzCompatReapTimer != null then
+            call PauseTimer(gDzCompatReapTimer)
+        endif
+    endfunction
+
+    function DzCompat_DeferDestroyFrame takes framehandle f returns nothing
+        if f == null then
+            return
+        endif
+        call BlzFrameSetVisible(f, false)
+        call BlzFrameSetEnable(f, false)
+        if gDzCompatReapCount >= 4000 then
+            call BlzDestroyFrame(f)
+            return
+        endif
+        set gDzCompatReapFrame[gDzCompatReapCount] = f
+        set gDzCompatReapAge[gDzCompatReapCount] = DZCOMPAT_REAP_TICKS
+        set gDzCompatReapCount = gDzCompatReapCount + 1
+        if gDzCompatReapTimer == null then
+            set gDzCompatReapTimer = CreateTimer()
+        endif
+        if gDzCompatReapCount == 1 then
+            call TimerStart(gDzCompatReapTimer, DZCOMPAT_REAP_PERIOD, true, function DzCompat_ReapTick)
+        endif
+    endfunction
+
+    function DzCompat_ReleaseFrame takes integer frame, boolean root returns nothing
+        local framehandle f = DzCompat_GetFrame(frame)
+        local integer eventId = 1
+        local trigger trig
+        if f == null then
+            return
+        endif
+        loop
+            exitwhen eventId > 40
+            set trig = LoadTriggerHandle(gDzCompatFrameEvt, frame, eventId)
+            if trig != null then
+                call DestroyTrigger(trig)
+            endif
+            set eventId = eventId + 1
+        endloop
+        call FlushChildHashtable(gDzCompatFrameEvt, frame)
+        call FlushChildHashtable(gDzCompatFocusTrack, frame)
+        call FlushChildHashtable(gDzCompatTextFit, frame)
+        call FlushChildHashtable(gDzCompatSizeCache, frame)
+        call FlushChildHashtable(gDzCompatFrameGeo, frame)
+        call FlushChildHashtable(gDzCompatHoverPending, frame)
+        if gDzCompatHoverTip[frame] != null then
+            call BlzDestroyFrame(gDzCompatHoverTip[frame])
+            set gDzCompatHoverTip[frame] = null
+        endif
+        call FlushChildHashtable(gDzCompatFrameChildren, frame)
+        call RemoveSavedInteger(gDzCompatReverseLookup, GetHandleId(f), 0)
+        set gDzCompatFrame[frame] = null
+        if root then
+            // Destroying a frame the mouse is over (or was just over) can leave the engine's hover
+            // tracking pointing at freed memory. Hide it now and destroy it a few ticks later;
+            // descendants are freed together with this root.
+            call DzCompat_DeferDestroyFrame(f)
+        endif
+        set trig = null
+        set f = null
     endfunction
 	
     // Lazily fetch and cache the GameUI origin frame. BlzGetOriginFrame is
@@ -247,150 +499,6 @@
         return gDzCompatEdgeOwner
     endfunction
 
-    function DzCompat_DbgB takes boolean b returns string
-        if b then
-            return "1"
-        endif
-        return "0"
-    endfunction
-
-    function DzCompat_DbgSize takes framehandle f returns string
-        if f == null then
-            return "n/a"
-        endif
-        return R2S(BlzFrameGetWidth(f)) + " x " + R2S(BlzFrameGetHeight(f))
-    endfunction
-
-    // Debug: a semi-transparent coloured strip owned by `par`; `color` picks TeamColor0<color>.
-    function DzCompat_MakeDebugStrip takes string name, framehandle par, integer color, real w, real h returns framehandle
-        local framehandle m = BlzCreateFrameByType("BACKDROP", name, par, "", 0)
-        if m != null then
-            call BlzFrameSetSize(m, w, h)
-            call BlzFrameSetTexture(m, "ReplaceableTextures\\TeamColor\\TeamColor0" + I2S(color) + ".blp", 0, true)
-            call BlzFrameSetAlpha(m, 170)
-        endif
-        return m
-    endfunction
-
-    // Debug: one line of text that stays for a minute (the default message time is a few seconds).
-    function DzCompat_DbgSay takes string msg returns nothing
-        call DisplayTimedTextToPlayer(GetLocalPlayer(), 0., 0., 60., msg)
-    endfunction
-
-    // Debug: test candidate parent number i (see the legend printed by DzCompat_DebugScreenTests).
-    function DzCompat_DebugCandidate takes integer i returns framehandle
-        if i == 0 then
-            return DzCompat_GetGameUI()
-        elseif i == 1 then
-            return BlzGetOriginFrame(ORIGIN_FRAME_WORLD_FRAME, 0)
-        elseif i == 2 then
-            return BlzGetFrameByName("ConsoleUI", 0)
-        elseif i == 3 then
-            return BlzGetFrameByName("ConsoleUIBackdrop", 0)
-        elseif i == 4 then
-            return BlzGetFrameByName("ConsoleTopBar", 0)
-        elseif i == 5 then
-            return BlzGetFrameByName("ConsoleBottomBar", 0)
-        elseif i == 6 then
-            return BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, 0)
-        elseif i == 7 then
-            if BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, 0) != null then
-                return BlzFrameGetParent(BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, 0))
-            endif
-        endif
-        return null
-    endfunction
-
-    function DzCompat_DebugLabel takes integer i returns string
-        if i == 0 then
-            return "GameUI"
-        elseif i == 1 then
-            return "world frame"
-        elseif i == 2 then
-            return "ConsoleUI"
-        elseif i == 3 then
-            return "ConsoleUIBackdrop"
-        elseif i == 4 then
-            return "ConsoleTopBar"
-        elseif i == 5 then
-            return "ConsoleBottomBar"
-        elseif i == 6 then
-            return "hero button 0"
-        endif
-        return "parent of hero button 0"
-    endfunction
-
-    // Debug. Eight strips, one per candidate parent, all pinned to the GameUI top-left with a
-    // -0.13 offset (that is outside the 4:3 area, at px 6 on a 1920x1080 window), stacked by
-    // 0.07 down from the top. A strip is visible only if its parent does not clip it, so the
-    // visible ones name the parents that can hold frames at the screen edge. Colours:
-    // 0 red 1 blue 2 teal 3 purple 4 yellow 5 orange 6 green 7 pink.
-    // Controls: S1 and S2 sit inside the 4:3 area and must be visible, P1 straddles its edge
-    // (0.05 wide, 0.03 outside): only the 0.02 inside part showing means clipping to the GameUI.
-    function DzCompat_DebugScreenTests takes nothing returns nothing
-        local framehandle par
-        local framehandle m
-        local integer i = 0
-        local real margin = DzCompat_ScreenMargin()
-        call DzCompat_DbgSay("DzCompat: client " + I2S(BlzGetLocalClientWidth()) + "x" + I2S(BlzGetLocalClientHeight()) + ", margin per side " + R2S(margin) + ", edge shift " + DzCompat_DbgB(DZCOMPAT_EDGE_SHIFT))
-        loop
-            exitwhen i > 7
-            set par = DzCompat_DebugCandidate(i)
-            if par == null then
-                call DzCompat_DbgSay("C" + I2S(i) + " " + DzCompat_DebugLabel(i) + ": NOT FOUND")
-            else
-                call DzCompat_DbgSay("C" + I2S(i) + " " + DzCompat_DebugLabel(i) + ": visible " + DzCompat_DbgB(BlzFrameIsVisible(par)) + ", alpha " + I2S(BlzFrameGetAlpha(par)) + ", size " + DzCompat_DbgSize(par))
-                set m = DzCompat_MakeDebugStrip("DzCompatDbgC" + I2S(i), par, i, 0.01, 0.06)
-                if m != null then
-                    call BlzFrameSetPoint(m, FRAMEPOINT_TOPLEFT, DzCompat_GetGameUI(), FRAMEPOINT_TOPLEFT, -0.13, -0.05 - 0.07 * I2R(i))
-                    // (strip drawn)
-                else
-                    call DzCompat_DbgSay("   strip C" + I2S(i) + " NOT CREATED")
-                endif
-            endif
-            set i = i + 1
-        endloop
-        // S1 teal: control, GameUI child inside the 4:3 area (0.02 right of its left edge)
-        set m = DzCompat_MakeDebugStrip("DzCompatDbgS1", DzCompat_GetGameUI(), 2, 0.01, 0.06)
-        if m != null then
-            call BlzFrameSetPoint(m, FRAMEPOINT_TOPLEFT, DzCompat_GetGameUI(), FRAMEPOINT_TOPLEFT, 0.02, -0.5)
-        endif
-        // S2 yellow: control, same but from the absolute point (0.04, 0.1)
-        set m = DzCompat_MakeDebugStrip("DzCompatDbgS2", DzCompat_GetGameUI(), 4, 0.01, 0.06)
-        if m != null then
-            call BlzFrameSetAbsPoint(m, FRAMEPOINT_TOPLEFT, 0.04, 0.1)
-        endif
-        // P1 pink: straddles the left edge, from -0.03 to 0.02
-        set m = DzCompat_MakeDebugStrip("DzCompatDbgP1", DzCompat_GetGameUI(), 7, 0.05, 0.06)
-        if m != null then
-            call BlzFrameSetPoint(m, FRAMEPOINT_TOPLEFT, DzCompat_GetGameUI(), FRAMEPOINT_TOPLEFT, -0.03, -0.38)
-        endif
-        // H1 yellow, H3 orange, H6 green: a 0.015 x 0.038 marker 0.045 to the right of the top-left
-        // corner of the REAL hero buttons 1, 3 and 6. Hidden buttons may not be laid out at all,
-        // so this shows where (and whether) they really are.
-        set i = 1
-        loop
-            exitwhen i > 6
-            set par = BlzGetOriginFrame(ORIGIN_FRAME_HERO_BUTTON, i)
-            if par != null then
-                set m = DzCompat_MakeDebugStrip("DzCompatDbgH" + I2S(i), DzCompat_EdgeOwner(), 3 + (i + 1) / 2, 0.015, 0.038)
-                if m != null then
-                    call BlzFrameSetPoint(m, FRAMEPOINT_TOPLEFT, par, FRAMEPOINT_TOPLEFT, 0.045, 0.)
-                endif
-                call DzCompat_DbgSay("H" + I2S(i) + " real hero button " + I2S(i) + ": visible " + DzCompat_DbgB(BlzFrameIsVisible(par)) + ", size " + DzCompat_DbgSize(par))
-            endif
-            if i == 3 then
-                set i = 6
-            else
-                set i = i + 2
-            endif
-        endloop
-        call DzCompat_DbgSay("Edge owner for frames created under the GameUI: " + DZCOMPAT_EDGE_OWNER + " (in use " + DzCompat_DbgB(DzCompat_EdgeOwner() != DzCompat_GetGameUI()) + ")")
-        call DzCompat_DbgSay("Controls: S1 teal and S2 yellow must show inside the 4:3 area; P1 pink straddles its left edge")
-        set m = null
-        set par = null
-    endfunction
-
     // The x offset to use for an anchor to frame r at relativePoint (0..8, Dz numbering: 0 top-
     // left, 1 top, 2 top-right, 3 left, 4 centre, 5 right, 6 bottom-left, 7 bottom, 8 bottom-
     // right). Anything but the GameUI is returned unchanged, and so is everything while
@@ -398,10 +506,6 @@
     function DzCompat_AnchorX takes framehandle r, integer relativePoint, real x returns real
         if r != DzCompat_GetGameUI() then
             return x
-        endif
-        if DZCOMPAT_DEBUG_SCREEN and not gDzCompatDbgDone then
-            set gDzCompatDbgDone = true
-            call DzCompat_DebugScreenTests()
         endif
         if not DZCOMPAT_EDGE_SHIFT then
             return x
@@ -412,6 +516,325 @@
             return x + DzCompat_ScreenMargin()
         endif
         return x
+    endfunction
+
+    // Fraction of the width (0 left, 0.5 centre, 1 right) at which a Dz anchor point (0..8) sits.
+    function DzCompat_PointFX takes integer point returns real
+        if point == 1 or point == 4 or point == 7 then
+            return 0.5
+        elseif point == 2 or point == 5 or point == 8 then
+            return 1.
+        endif
+        return 0.
+    endfunction
+
+    // Fraction of the height, measured from the bottom, at which a Dz anchor point (0..8) sits.
+    function DzCompat_PointFY takes integer point returns real
+        if point <= 2 then
+            return 1.
+        elseif point <= 5 then
+            return 0.5
+        endif
+        return 0.
+    endfunction
+
+    // A frame as big as the Dz screen (0.8 x 0.6 or more) and centred on the GameUI is a full-screen
+    // backdrop: the 4:3 GameUI squeezes it to 0.8 x 0.6, so on the edge owner it is given that height
+    // and the width of the real screen (0.8 + 2 * margin).
+    function DzCompat_IsFullScreen takes integer frame, real w, real h returns boolean
+        if not (DZCOMPAT_EDGE_SHIFT and DZCOMPAT_EDGE_FIT) then
+            return false
+        endif
+        if not LoadBoolean(gDzCompatFrameGeo, frame, 9) or w < 0.799 or h < 0.599 then
+            return false
+        endif
+        return DzCompat_EdgeOwner() != DzCompat_GetGameUI()
+    endfunction
+
+    // Visible on screen: the frame and all its parents are visible and the frame is not fully transparent.
+    function DzCompat_EffVisible takes framehandle f returns boolean
+        local framehandle p = f
+        local integer n = 0
+        loop
+            exitwhen p == null or p == DzCompat_EdgeOwner() or p == DzCompat_GetGameUI() or n >= 24
+            if not BlzFrameIsVisible(p) then
+                set p = null
+                return false
+            endif
+            set p = BlzFrameGetParent(p)
+            set n = n + 1
+        endloop
+        set p = null
+        return BlzFrameGetAlpha(f) > 0
+    endfunction
+
+    function DzCompat_CoverApplyOne takes integer slot, framehandle f, boolean hide returns nothing
+        if f != null then
+            if hide then
+                if BlzFrameIsVisible(f) then
+                    call BlzFrameSetVisible(f, false)
+                    call BlzFrameSetAlpha(f, 0)
+                    set gDzCompatCoverHid[slot] = true
+                endif
+            elseif gDzCompatCoverHid[slot] then
+                set gDzCompatCoverHid[slot] = false
+                call BlzFrameSetAlpha(f, 255)
+                call BlzFrameSetVisible(f, true)
+            endif
+        endif
+    endfunction
+
+    // Hides the console art (and, with DZCOMPAT_COVER_HIDE_HUD, the minimap, system buttons and resource
+    // bar) while a registered cover is visible and restores it afterwards.
+    function DzCompat_CoverTick takes nothing returns nothing
+        local integer i = 0
+        local boolean any = false
+        local framehandle f
+        loop
+            exitwhen i >= gDzCompatCoverCount or any
+            set f = DzCompat_GetFrame(gDzCompatCoverId[i])
+            if f != null and DzCompat_EffVisible(f) then
+                set any = true
+            endif
+            set i = i + 1
+        endloop
+        set f = null
+        call DzCompat_CoverApplyOne(0, BlzGetFrameByName("ConsoleTopBar", 0), any)
+        call DzCompat_CoverApplyOne(1, BlzGetFrameByName("ConsoleBottomBar", 0), any)
+        call DzCompat_CoverApplyOne(2, BlzGetFrameByName("SimpleInventoryCover", 0), any)
+        if DZCOMPAT_COVER_HIDE_HUD then
+            // minimap and its buttons
+            call DzCompat_CoverApplyOne(3, BlzGetOriginFrame(ORIGIN_FRAME_MINIMAP, 0), any)
+            set i = 0
+            loop
+                exitwhen i > 4
+                call DzCompat_CoverApplyOne(4 + i, BlzGetOriginFrame(ORIGIN_FRAME_MINIMAP_BUTTON, i), any)
+                set i = i + 1
+            endloop
+            // Info, Menu, Allies, Log
+            set i = 0
+            loop
+                exitwhen i > 3
+                call DzCompat_CoverApplyOne(9 + i, BlzGetOriginFrame(ORIGIN_FRAME_SYSTEM_BUTTON, i), any)
+                set i = i + 1
+            endloop
+            call DzCompat_CoverApplyOne(13, BlzGetFrameByName("UpperButtonBarFrame", 0), any)
+            // resource indicators (gold, lumber, food, upkeep)
+            call DzCompat_CoverApplyOne(14, BlzGetFrameByName("ResourceBarFrame", 0), any)
+        endif
+    endfunction
+
+    function DzCompat_CoverRegister takes integer frame returns nothing
+        if not DZCOMPAT_EDGE_HIDE_CONSOLE or gDzCompatCoverCount >= 64 or LoadBoolean(gDzCompatFrameGeo, frame, 8) then
+            return
+        endif
+        call SaveBoolean(gDzCompatFrameGeo, frame, 8, true)
+        set gDzCompatCoverId[gDzCompatCoverCount] = frame
+        set gDzCompatCoverCount = gDzCompatCoverCount + 1
+        if gDzCompatCoverTimer == null then
+            set gDzCompatCoverTimer = CreateTimer()
+            call TimerStart(gDzCompatCoverTimer, DZCOMPAT_COVER_PERIOD, true, function DzCompat_CoverTick)
+        endif
+    endfunction
+
+    // Remembers a panel that the 4:3 GameUI would squeeze: [a, b] is the squeezed x range, [na, nb] the
+    // natural one, y0..y1 its height.
+    function DzCompat_PanelAdd takes integer frame, real a, real b, real na, real nb, real y0, real y1 returns nothing
+        local integer i = LoadInteger(gDzCompatFrameGeo, frame, 12) - 1
+        if i < 0 then
+            if gDzCompatPanelCount >= 8 then
+                return
+            endif
+            set i = gDzCompatPanelCount
+            set gDzCompatPanelCount = i + 1
+            call SaveInteger(gDzCompatFrameGeo, frame, 12, i + 1)
+        endif
+        set gDzCompatPanelFrame[i] = frame
+        set gDzCompatPanelA[i] = a
+        set gDzCompatPanelB[i] = b
+        set gDzCompatPanelNA[i] = na
+        set gDzCompatPanelNB[i] = nb
+        set gDzCompatPanelY0[i] = y0
+        set gDzCompatPanelY1[i] = y1
+    endfunction
+
+    // Horizontal move of text frames. They move left by about 5% of 
+	// the 4:3 width (0.3 * margin = 0.04 at 16:9, 0 at 4:3).
+    function DzCompat_TextShiftExtra takes framehandle f, real x, real y returns real
+        local string n = StringCase(BlzFrameGetName(f), false)
+        if x > 0.125 and x < 0.135 and y > 0.115 and y < 0.125 then
+            return -0.3 * DzCompat_ScreenMargin()
+        endif
+        return 0.
+    endfunction
+
+    // Places a frame that the map anchored with DzFrameSetAbsolutePoint (called again whenever its size
+    // changes, because the placement depends on it). On the edge owner:
+    //  1. (DZCOMPAT_EDGE_COVER_CONSOLE, off by default) a frame covering the whole bottom console bar moves to the GameUI;
+    //  2. a frame that sticks out of the 4:3 area by 25% or more of its squeezed width is remembered as a
+    //     squeezed panel; a frame that lies inside the squeezed part of an earlier panel is stretched with
+    //     the panel (the 4:3 GameUI would have squeezed both);
+    //  2b. a text frame whose left edge lies on a squeezed panel (up to 0.1 above or below it) is moved with
+    //     it (position only, the size is left to the text fit);
+    //  3. every frame is cut to the real screen, as the GameUI would do (a squeezed panel keeps its height:
+    //     it is a decoration that is meant to run off the screen);
+    //  4. a large frame over the console art is registered so the console art is hidden while it is shown.
+    function DzCompat_AbsApply takes integer frame returns nothing
+        local framehandle f = DzCompat_GetFrame(frame)
+        local framehandle par
+        local integer point
+        local integer i
+        local real x
+        local real y
+        local real w
+        local real h
+        local real m = DzCompat_ScreenMargin()
+        local real x0
+        local real y0
+        local real x1
+        local real y1
+        local real ox0
+        local real ox1
+        local real oy0
+        local real oy1
+        local real a
+        local real b
+        local real k
+        local real nw
+        local real nh
+        local boolean cover = false
+        local boolean mapped = false
+        local boolean isPanel = false
+        local boolean found = false
+        local real extra
+        local real tx0
+        local real tol
+        local integer pass
+        if f == null or not LoadBoolean(gDzCompatFrameGeo, frame, 6) then
+            return
+        endif
+        set point = LoadInteger(gDzCompatFrameGeo, frame, 3)
+        set x = LoadReal(gDzCompatFrameGeo, frame, 4)
+        set y = LoadReal(gDzCompatFrameGeo, frame, 5)
+        set w = LoadReal(gDzCompatFrameGeo, frame, 0)
+        set h = LoadReal(gDzCompatFrameGeo, frame, 1)
+        set nw = w
+        set nh = h
+        set ox0 = x - w * DzCompat_PointFX(point)
+        set oy0 = y - h * DzCompat_PointFY(point)
+        set ox1 = ox0 + w
+        set oy1 = oy0 + h
+        if DZCOMPAT_EDGE_SHIFT and DzCompat_EdgeOwner() != DzCompat_GetGameUI() then
+            if DZCOMPAT_EDGE_COVER_CONSOLE and w > 0. and h > 0. then
+                set cover = ox0 <= DZCOMPAT_CONSOLE_COVER_X0 and ox1 >= DZCOMPAT_CONSOLE_COVER_X1 and oy0 <= DZCOMPAT_CONSOLE_COVER_Y0 and oy1 >= DZCOMPAT_CONSOLE_COVER_Y1
+            endif
+            set par = BlzFrameGetParent(f)
+            if cover and par == DzCompat_EdgeOwner() then
+                call BlzFrameSetParent(f, DzCompat_GetGameUI())
+                call SaveBoolean(gDzCompatFrameGeo, frame, 7, true)
+            elseif not cover and LoadBoolean(gDzCompatFrameGeo, frame, 7) and par == DzCompat_GetGameUI() then
+                call BlzFrameSetParent(f, DzCompat_EdgeOwner())
+                call SaveBoolean(gDzCompatFrameGeo, frame, 7, false)
+            endif
+            if w > 0. and h > 0. and BlzFrameGetParent(f) == DzCompat_EdgeOwner() then
+                if DZCOMPAT_EDGE_FIT and not LoadBoolean(gDzCompatFrameGeo, frame, 10) then
+                    set x0 = ox0
+                    set x1 = ox1
+                    set y0 = oy0
+                    set y1 = oy1
+                    // squeezed panel: remember it, or stretch a frame that lies on an earlier one
+                    set a = -1.
+                    set b = -1.
+                    if ox0 < -0.01 and ox1 > 0.01 and (ox1 - ox0) / ox1 >= 1.25 then
+                        set a = 0.
+                        set b = ox1
+                    elseif ox1 > 0.81 and ox0 < 0.79 and (ox1 - ox0) / (0.8 - ox0) >= 1.25 then
+                        set a = ox0
+                        set b = 0.8
+                    endif
+                    if b >= 0. then
+                        call DzCompat_PanelAdd(frame, a, b, ox0, ox1, oy0, oy1)
+                        set isPanel = true
+                    else
+                        set i = 0
+                        loop
+                            exitwhen i >= gDzCompatPanelCount or mapped
+                            if gDzCompatPanelFrame[i] != frame and ox0 >= gDzCompatPanelA[i] - 0.0001 and ox1 <= gDzCompatPanelB[i] + 0.0001 and oy1 > gDzCompatPanelY0[i] and oy0 < gDzCompatPanelY1[i] then
+                                set k = (gDzCompatPanelNB[i] - gDzCompatPanelNA[i]) / (gDzCompatPanelB[i] - gDzCompatPanelA[i])
+                                set x0 = gDzCompatPanelNA[i] + (ox0 - gDzCompatPanelA[i]) * k
+                                set x1 = gDzCompatPanelNA[i] + (ox1 - gDzCompatPanelA[i]) * k
+                                set mapped = true
+                            endif
+                            set i = i + 1
+                        endloop
+                    endif
+                    // cut to the real screen
+                    if x0 < -m then
+                        set x0 = -m
+                    endif
+                    if x1 > 0.8 + m then
+                        set x1 = 0.8 + m
+                    endif
+                    if not isPanel then
+                        if y0 < 0. then
+                            set y0 = 0.
+                        endif
+                        if y1 > 0.6 then
+                            set y1 = 0.6
+                        endif
+                    endif
+                    if x1 > x0 and y1 > y0 then
+                        set nw = x1 - x0
+                        set nh = y1 - y0
+                        set x = x0 + nw * DzCompat_PointFX(point)
+                        set y = y0 + nh * DzCompat_PointFY(point)
+                    endif
+                endif
+                if (oy0 < DZCOMPAT_CONSOLE_BOTTOM_TOP or oy1 > DZCOMPAT_CONSOLE_TOP_BOTTOM) and w * h >= DZCOMPAT_COVER_MIN_AREA then
+                    call DzCompat_CoverRegister(frame)
+                endif
+            endif
+            // text on a squeezed panel moves left/right with it (its size is left to the text fit): the
+            // frame's left edge is mapped like the panel content and the whole frame is moved by the difference
+            if DZCOMPAT_EDGE_FIT and LoadBoolean(gDzCompatTextFit, frame, 0) and BlzFrameGetParent(f) == DzCompat_EdgeOwner() then
+                set extra = DzCompat_TextShiftExtra(f, LoadReal(gDzCompatFrameGeo, frame, 4), y)
+                if extra != 0. then
+                    set x = x + extra
+                else
+                    set tx0 = x - w * DzCompat_PointFX(point)
+                    set pass = 0
+                    loop
+                        exitwhen pass > 1 or found
+                        set i = 0
+                        loop
+                            exitwhen i >= gDzCompatPanelCount or found
+                            set tol = 0.1 * pass
+                            if tx0 >= gDzCompatPanelA[i] - 0.0001 and tx0 <= gDzCompatPanelB[i] + 0.0001 and y >= gDzCompatPanelY0[i] - tol and y <= gDzCompatPanelY1[i] + tol then
+                                set k = (gDzCompatPanelNB[i] - gDzCompatPanelNA[i]) / (gDzCompatPanelB[i] - gDzCompatPanelA[i])
+                                set x = x + gDzCompatPanelNA[i] + (tx0 - gDzCompatPanelA[i]) * k - tx0
+                                set found = true
+                            endif
+                            set i = i + 1
+                        endloop
+                        set pass = pass + 1
+                    endloop
+                endif
+            endif
+        endif
+        if nw != w or nh != h then
+            call BlzFrameSetSize(f, nw, nh)
+        endif
+        call BlzFrameSetAbsPoint(f, ConvertFramePointType(point), x, y)
+        set f = null
+        set par = null
+    endfunction
+
+    function DzCompat_AbsSet takes integer frame, integer point, real x, real y returns nothing
+        call SaveBoolean(gDzCompatFrameGeo, frame, 6, true)
+        call SaveInteger(gDzCompatFrameGeo, frame, 3, point)
+        call SaveReal(gDzCompatFrameGeo, frame, 4, x)
+        call SaveReal(gDzCompatFrameGeo, frame, 5, y)
+        call DzCompat_AbsApply(frame)
     endfunction
 
     // The frame that should own a new frame. A parent id that is 0 or does not name a
@@ -530,7 +953,10 @@
         endif
         set x = x + (a - jf) * (w - reqW)
         if kind == 1 then
-            call BlzFrameSetAbsPoint(f, ConvertFramePointType(pt), x, y)
+            call SaveBoolean(gDzCompatFrameGeo, frame, 10, true)
+            call SaveReal(gDzCompatFrameGeo, frame, 0, w)
+            call SaveReal(gDzCompatFrameGeo, frame, 1, reqH)
+            call DzCompat_AbsSet(frame, pt, x, y)
         else
             set r = DzCompat_GetFrame(LoadInteger(gDzCompatTextFit, frame, 6))
             if r != null then
@@ -587,6 +1013,9 @@
         if fid != 0 and StringCase(frameType, true) == "TEXT" then
             call SaveBoolean(gDzCompatTextFit, fid, 0, true)
         endif
+        if fid != 0 and DzCompat_GetFrame(parent) != null and DzCompat_GetFrame(parent) != DzCompat_GetGameUI() then
+            call DzCompat_FrameAddChild(parent, fid)
+        endif
         return fid
     endfunction
 
@@ -601,26 +1030,41 @@
     // untouched here on purpose: its trigger is shared across every frame
     // registered to that function name, so it must outlive any single frame.
     function DzDestroyFrame takes integer frame returns nothing
-        local framehandle f = DzCompat_GetFrame(frame)
-        local integer eventId = 1
-        local trigger trig
-        if f == null then
+        local integer head = 0
+        local integer tail = 1
+        local integer id
+        local integer n
+        local integer i
+        if DzCompat_GetFrame(frame) == null then
             return
         endif
+        // [FIXED] crash: destroying a frame whose Dz children were created under it used to
+        // free those children inside the engine while their Dz ids stayed valid. The next
+        // DzFrameShow / DzFrameSetEnable / DzDestroyFrame on such an id touched a freed frame
+        // (access violation). Collect the whole subtree, then release children before parents.
+        set gDzCompatDestroyQueue[0] = frame
         loop
-            exitwhen eventId > 20
-            set trig = LoadTriggerHandle(gDzCompatFrameEvt, frame, eventId)
-            if trig != null then
-                call DestroyTrigger(trig)
-            endif
-            set eventId = eventId + 1
+            exitwhen head >= tail
+            set id = gDzCompatDestroyQueue[head]
+            set head = head + 1
+            set n = LoadInteger(gDzCompatFrameChildren, id, 0)
+            set i = 1
+            loop
+                exitwhen i > n or tail >= DZCOMPAT_MAX_FRAMES
+                if DzCompat_GetFrame(LoadInteger(gDzCompatFrameChildren, id, i)) != null then
+                    set gDzCompatDestroyQueue[tail] = LoadInteger(gDzCompatFrameChildren, id, i)
+                    set tail = tail + 1
+                endif
+                set i = i + 1
+            endloop
         endloop
-        call FlushChildHashtable(gDzCompatFrameEvt, frame)
-        call FlushChildHashtable(gDzCompatFocusTrack, frame)
-        call FlushChildHashtable(gDzCompatTextFit, frame)
-        call BlzDestroyFrame(f)
-        set gDzCompatFrame[frame] = null
-        set trig = null
+        call DzCompat_FrameRemoveChild(frame)
+        set i = tail - 1
+        loop
+            exitwhen i < 0
+            call DzCompat_ReleaseFrame(gDzCompatDestroyQueue[i], i == 0)
+            set i = i - 1
+        endloop
     endfunction
 
     function DzFrameFindByName takes string name, integer id returns integer
@@ -734,12 +1178,6 @@ function DzFrameGetHeroBarButton takes integer buttonId returns integer
     else
         call BlzFrameSetPoint(proxy, FRAMEPOINT_TOPLEFT, DzCompat_GetGameUI(), FRAMEPOINT_TOPLEFT, DzCompat_AnchorX(DzCompat_GetGameUI(), 0, 0.), -(0.05 + (buttonId * 0.04)))
     endif
-    if DZCOMPAT_DEBUG_SCREEN and gDzCompatDbgLog < 14 then
-        set gDzCompatDbgLog = gDzCompatDbgLog + 1
-        call DzCompat_DbgSay("HeroBarButton(" + I2S(buttonId) + "): real button " + DzCompat_DbgB(realBtn != null) + ", real visible " + DzCompat_DbgB(realBtn != null and BlzFrameIsVisible(realBtn)) + ", real size " + DzCompat_DbgSize(realBtn) + ", follows real button " + DzCompat_DbgB(realBtn != null and DZCOMPAT_EDGE_SHIFT))
-        call DzCompat_DbgSay("   proxy " + I2S(buttonId) + " is anchored to the real hero button " + I2S(buttonId) + "; gray marker 0.07 to its right")
-        call BlzFrameSetPoint(DzCompat_MakeDebugStrip("DzCompatDbgProxy" + I2S(buttonId), DzCompat_EdgeOwner(), 8, 0.015, 0.038), FRAMEPOINT_TOPLEFT, proxy, FRAMEPOINT_TOPLEFT, 0.07, 0.)
-    endif
     return DzCompat_RegisterFrame(proxy)
 endfunction
 
@@ -835,13 +1273,16 @@ endfunction
         endif
         call BlzFrameSetPoint(f, ConvertFramePointType(point), r, ConvertFramePointType(relativePoint), DzCompat_AnchorX(r, relativePoint, x), y)
         call DzCompat_TrackFramePoint(frame, point, relativeFrame, relativePoint, x, y)
-        if DZCOMPAT_DEBUG_SCREEN and r == DzCompat_GetGameUI() and gDzCompatDbgLog < 10 then
-            set gDzCompatDbgLog = gDzCompatDbgLog + 1
-            call DzCompat_DbgSay("SetPoint #" + I2S(frame) + " '" + BlzFrameGetName(f) + "' point " + I2S(point) + " -> GameUI point " + I2S(relativePoint) + ", x " + R2S(x) + " -> " + R2S(DzCompat_AnchorX(r, relativePoint, x)) + ", y " + R2S(y) + ", visible " + DzCompat_DbgB(BlzFrameIsVisible(f)))
+        if LoadBoolean(gDzCompatFrameGeo, frame, 6) and LoadInteger(gDzCompatFrameGeo, frame, 3) == point then
+        call SaveBoolean(gDzCompatFrameGeo, frame, 6, false)
+        endif
+        if r == DzCompat_GetGameUI() and point == 4 and relativePoint == 4 and x == 0. and y == 0. then
+        call SaveBoolean(gDzCompatFrameGeo, frame, 9, true)
         endif
         if LoadBoolean(gDzCompatTextFit, frame, 0) then
             if LoadInteger(gDzCompatTextFit, frame, 4) != 0 and LoadInteger(gDzCompatTextFit, frame, 5) != point then
                 call SaveBoolean(gDzCompatTextFit, frame, 11, true)
+                call RemoveSavedReal(gDzCompatSizeCache, frame, 0)
             endif
             call SaveInteger(gDzCompatTextFit, frame, 4, 2)
             call SaveInteger(gDzCompatTextFit, frame, 5, point)
@@ -858,7 +1299,7 @@ endfunction
         if f == null or point < 0 or point > 8 then
             return
         endif
-        call BlzFrameSetAbsPoint(f, ConvertFramePointType(point), x, y)
+        call DzCompat_AbsSet(frame, point, x, y)
         call DzCompat_TrackFramePoint(frame, point, 0, 0, x, y)
         if LoadBoolean(gDzCompatTextFit, frame, 0) then
             if LoadInteger(gDzCompatTextFit, frame, 4) != 0 and LoadInteger(gDzCompatTextFit, frame, 5) != point then
@@ -885,6 +1326,7 @@ endfunction
         else
             call BlzFrameSetAllPoints(f, r)
         endif
+        call SaveBoolean(gDzCompatFrameGeo, frame, 6, false)
         call DzCompat_TrackFramePoint(frame, 0, relativeFrame, 0, 0., 0.)
         call DzCompat_TrackFramePoint(frame, 8, relativeFrame, 8, 0., 0.)
         // size now comes from the other frame, so the auto-fit must leave this one alone
@@ -897,8 +1339,10 @@ endfunction
         if f != null then
             call BlzFrameClearAllPoints(f)
             call FlushChildHashtable(gDzCompatFramePoints, frame)
+            call SaveBoolean(gDzCompatFrameGeo, frame, 6, false)
             call SaveInteger(gDzCompatTextFit, frame, 4, 0)
             call SaveBoolean(gDzCompatTextFit, frame, 11, false)
+            call RemoveSavedReal(gDzCompatSizeCache, frame, 0)
         endif
     endfunction
 
@@ -929,17 +1373,71 @@ endfunction
         return LoadReal(gDzCompatFramePoints, frame, anchor * 8 + 3)
     endfunction
 
+    function DzCompat_SizeFlush takes nothing returns nothing
+        local integer i = 0
+        local integer id
+        local framehandle f
+        local real w
+        local real h
+        loop
+            exitwhen i >= gDzCompatSizePendingCount
+            set id = gDzCompatSizePendingId[i]
+            set f = DzCompat_GetFrame(id)
+            if f != null and LoadBoolean(gDzCompatSizeCache, id, 4) then
+                set w = LoadReal(gDzCompatSizeCache, id, 2)
+                set h = LoadReal(gDzCompatSizeCache, id, 3)
+                call SaveBoolean(gDzCompatSizeCache, id, 4, false)
+                if not (HaveSavedReal(gDzCompatSizeCache, id, 0) and w - LoadReal(gDzCompatSizeCache, id, 0) < 0.00001 and LoadReal(gDzCompatSizeCache, id, 0) - w < 0.00001 and h - LoadReal(gDzCompatSizeCache, id, 1) < 0.00001 and LoadReal(gDzCompatSizeCache, id, 1) - h < 0.00001) then
+                    call SaveReal(gDzCompatSizeCache, id, 0, w)
+                    call SaveReal(gDzCompatSizeCache, id, 1, h)
+                    call BlzFrameSetSize(f, w, h)
+                    // the edge-shift layout (squeezed panels, console cover) is computed from the size, so redo it now
+                    call DzCompat_AbsApply(id)
+                endif
+            endif
+            set f = null
+            set i = i + 1
+        endloop
+        set gDzCompatSizePendingCount = 0
+    endfunction
+
     function DzFrameSetSize takes integer frame, real w, real h returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
+        call SaveReal(gDzCompatFrameGeo, frame, 0, w)
+        call SaveReal(gDzCompatFrameGeo, frame, 1, h)
+        if DzCompat_IsFullScreen(frame, w, h) then
+            set w = 0.8 + 2. * DzCompat_ScreenMargin()
+            set h = 0.6
+            call DzCompat_CoverRegister(frame)
+        endif
         if f != null then
-            call BlzFrameSetSize(f, w, h)
             if LoadBoolean(gDzCompatTextFit, frame, 0) then
+                call BlzFrameSetSize(f, w, h)
                 call SaveReal(gDzCompatTextFit, frame, 1, w)
                 call SaveReal(gDzCompatTextFit, frame, 2, h)
                 call SaveBoolean(gDzCompatTextFit, frame, 3, true)
                 call DzCompat_TextFit(frame, true)
+            else
+                call SaveReal(gDzCompatSizeCache, frame, 2, w)
+                call SaveReal(gDzCompatSizeCache, frame, 3, h)
+                if not LoadBoolean(gDzCompatSizeCache, frame, 4) then
+                    call SaveBoolean(gDzCompatSizeCache, frame, 4, true)
+                    if gDzCompatSizePendingCount < 8000 then
+                        set gDzCompatSizePendingId[gDzCompatSizePendingCount] = frame
+                        set gDzCompatSizePendingCount = gDzCompatSizePendingCount + 1
+                        if gDzCompatSizePendingCount == 1 then
+                            if gDzCompatSizeTimer == null then
+                                set gDzCompatSizeTimer = CreateTimer()
+                            endif
+                            call TimerStart(gDzCompatSizeTimer, 0., false, function DzCompat_SizeFlush)
+                        endif
+                    else
+                        call BlzFrameSetSize(f, w, h)
+                    endif
+                endif
             endif
         endif
+        call DzCompat_AbsApply(frame)
     endfunction
 
     function DzFrameSetParent takes integer frame, integer parent returns nothing
@@ -950,6 +1448,10 @@ endfunction
                 set p = DzCompat_EdgeOwner()
             endif
             call BlzFrameSetParent(f, p)
+            call DzCompat_FrameRemoveChild(frame)
+            if DzCompat_GetFrame(parent) != DzCompat_GetGameUI() then
+                call DzCompat_FrameAddChild(parent, frame)
+            endif
         endif
     endfunction
 
@@ -984,6 +1486,11 @@ endfunction
         local framehandle f = DzCompat_GetFrame(frame)
         if f != null then
             call BlzFrameSetVisible(f, enable)
+            if not enable then
+                if not DZCOMPAT_HOVER_VIA_TOOLTIP then
+                    call DzCompat_HoverRearm(frame)
+                endif
+            endif
         endif
     endfunction
 
@@ -1505,12 +2012,38 @@ endfunction
     // (matching how a real Dz build does this) keeps the effect local and identical in
     // spirit for whichever client actually needs it, with no state-dependent condition
     // in the way.
+    function DzCompat_FixTick takes nothing returns nothing
+        local integer i = 0
+        local integer n = gDzCompatFixCount
+        set gDzCompatFixCount = 0
+        loop
+            exitwhen i >= n
+            if gDzCompatFixFrame[i] != null then
+                call BlzFrameSetFocus(gDzCompatFixFrame[i], false)
+            endif
+            set gDzCompatFixFrame[i] = null
+            set i = i + 1
+        endloop
+    endfunction
+
     function DzCompat_ClickFix takes nothing returns nothing
         local framehandle f = BlzGetTriggerFrame()
         if f != null and GetLocalPlayer() == GetTriggerPlayer() then
-            call BlzFrameSetEnable(f, false)
-            call BlzFrameSetEnable(f, true)
+            if DZCOMPAT_CLICKFIX_MODE == 0 then
+                call BlzFrameSetEnable(f, false)
+                call BlzFrameSetEnable(f, true)
+            elseif DZCOMPAT_CLICKFIX_MODE == 3 and gDzCompatFixCount < 8 then
+                set gDzCompatFixFrame[gDzCompatFixCount] = f
+                set gDzCompatFixCount = gDzCompatFixCount + 1
+                if gDzCompatFixCount == 1 then
+                    if gDzCompatFixTimer == null then
+                        set gDzCompatFixTimer = CreateTimer()
+                    endif
+                    call TimerStart(gDzCompatFixTimer, 0.05, false, function DzCompat_FixTick)
+                endif
+            endif
         endif
+        set f = null
     endfunction
 
     function DzCompat_MouseFocusEnter takes nothing returns nothing
@@ -1586,15 +2119,218 @@ endfunction
     // one. sync is not a real choice here - see the note above DzCompat_ClickGate: a
     // frame click's condition/action run on every client already, regardless of this
     // flag - so it is accepted and ignored, as before.
+    function DzCompat_HoverDispatch takes integer id, integer eventId returns nothing
+        local trigger user = LoadTriggerHandle(gDzCompatFrameEvt, id, eventId + 20)
+        if user == null or DzCompat_GetFrame(id) == null then
+            set user = null
+            return
+        endif
+        set gDzCompatHoverOverride = true
+        set gDzCompatHoverOverrideId = id
+        call TriggerExecute(user)
+        set gDzCompatHoverOverride = false
+        set user = null
+    endfunction
+
+    function DzCompat_HoverPoll takes nothing returns nothing
+        local integer i = 0
+        local integer j = 0
+        local integer k
+        local integer n = gDzCompatHoverWatchCount
+        local integer m
+        local integer id
+        local framehandle f
+        local framehandle tip
+        local boolean vis
+        loop
+            exitwhen i >= n
+            set id = gDzCompatHoverWatchId[i]
+            set f = DzCompat_GetFrame(id)
+            set tip = gDzCompatHoverTip[id]
+            if f == null or tip == null then
+                call FlushChildHashtable(gDzCompatHoverState, id)
+            else
+                set gDzCompatHoverWatchId[j] = id
+                set j = j + 1
+                set vis = BlzFrameIsVisible(tip)
+                if vis != LoadBoolean(gDzCompatHoverState, id, 0) then
+                    call SaveBoolean(gDzCompatHoverState, id, 0, vis)
+                    if vis then
+                        set gDzCompatMouseFocusId = GetHandleId(f)
+                        call DzCompat_HoverDispatch(id, 2)
+                    else
+                        if gDzCompatMouseFocusId == GetHandleId(f) then
+                            set gDzCompatMouseFocusId = 0
+                        endif
+                        call DzCompat_HoverDispatch(id, 3)
+                    endif
+                endif
+            endif
+            set i = i + 1
+        endloop
+        set m = gDzCompatHoverWatchCount
+        set k = n
+        loop
+            exitwhen k >= m
+            set gDzCompatHoverWatchId[j] = gDzCompatHoverWatchId[k]
+            set j = j + 1
+            set k = k + 1
+        endloop
+        set gDzCompatHoverWatchCount = j
+        if j == 0 and gDzCompatHoverPollTimer != null then
+            call PauseTimer(gDzCompatHoverPollTimer)
+        endif
+        set f = null
+        set tip = null
+    endfunction
+
+    function DzCompat_HoverEnroll takes integer id returns nothing
+        local framehandle f = DzCompat_GetFrame(id)
+        local framehandle tip
+        if f == null then
+            return
+        endif
+        if gDzCompatHoverTip[id] == null then
+            set tip = BlzCreateFrameByType("FRAME", "DzCompatHoverTip", BlzGetOriginFrame(ORIGIN_FRAME_GAME_UI, 0), "", 0)
+            if tip == null then
+                set f = null
+                return
+            endif
+            call BlzFrameSetSize(tip, 0.0001, 0.0001)
+            call BlzFrameSetAbsPoint(tip, FRAMEPOINT_BOTTOMLEFT, 0., 0.)
+            call BlzFrameSetTooltip(f, tip)
+            set gDzCompatHoverTip[id] = tip
+        endif
+        if not LoadBoolean(gDzCompatHoverState, id, 1) and gDzCompatHoverWatchCount < 2000 then
+            call SaveBoolean(gDzCompatHoverState, id, 1, true)
+            set gDzCompatHoverWatchId[gDzCompatHoverWatchCount] = id
+            set gDzCompatHoverWatchCount = gDzCompatHoverWatchCount + 1
+            if gDzCompatHoverWatchCount == 1 then
+                if gDzCompatHoverPollTimer == null then
+                    set gDzCompatHoverPollTimer = CreateTimer()
+                endif
+                call TimerStart(gDzCompatHoverPollTimer, 0.03, true, function DzCompat_HoverPoll)
+            endif
+        endif
+        set f = null
+        set tip = null
+    endfunction
+
+    function DzCompat_HoverNow takes nothing returns real
+        if gDzCompatHoverClock == null then
+            set gDzCompatHoverClock = CreateTimer()
+            call TimerStart(gDzCompatHoverClock, 3600., false, null)
+        endif
+        return TimerGetElapsed(gDzCompatHoverClock)
+    endfunction
+
+    function DzCompat_HoverFlushCore takes boolean forceAll returns nothing
+        local integer i = 0
+        local integer j = 0
+        local integer n = gDzCompatHoverPendingCount
+        local integer id
+        local real now = DzCompat_HoverNow()
+        loop
+            exitwhen i >= n
+            set id = gDzCompatHoverPendingId[i]
+            if LoadBoolean(gDzCompatHoverPending, id, 0) then
+                if forceAll or now - LoadReal(gDzCompatHoverPending, id, 1) >= DZCOMPAT_HOVER_LEAVE_QUIET then
+                    call SaveBoolean(gDzCompatHoverPending, id, 0, false)
+                    call DzCompat_HoverDispatch(id, 3)
+                    call DzCompat_HoverRearm(id)
+                else
+                    set gDzCompatHoverPendingId[j] = id
+                    set j = j + 1
+                endif
+            endif
+            set i = i + 1
+        endloop
+        set gDzCompatHoverPendingCount = j
+        if j == 0 and gDzCompatHoverFlushTimer != null then
+            call PauseTimer(gDzCompatHoverFlushTimer)
+        endif
+    endfunction
+
+    function DzCompat_HoverFlushLeaves takes nothing returns nothing
+        call DzCompat_HoverFlushCore(true)
+    endfunction
+
+    function DzCompat_HoverLeaveTick takes nothing returns nothing
+        call DzCompat_HoverFlushCore(false)
+    endfunction
+
+    function DzCompat_HoverRelay takes nothing returns nothing
+        local framehandle f = BlzGetTriggerFrame()
+        local integer id = 0
+        if f != null and HaveSavedInteger(gDzCompatReverseLookup, GetHandleId(f), 0) then
+            set id = LoadInteger(gDzCompatReverseLookup, GetHandleId(f), 0)
+        endif
+        set f = null
+        if id == 0 then
+            return
+        endif
+        if BlzGetTriggerFrameEvent() == FRAMEEVENT_MOUSE_ENTER then
+            if LoadBoolean(gDzCompatHoverPending, id, 0) then
+                // LEAVE + ENTER of the same frame: not a real hover change, drop both
+                call SaveBoolean(gDzCompatHoverPending, id, 0, false)
+            else
+                // the cursor is on a different frame now: every other pending LEAVE is real
+                call DzCompat_HoverFlushLeaves()
+                call DzCompat_HoverDispatch(id, 2)
+                if DZCOMPAT_HOVER_ONESHOT then
+                    set gDzCompatHoverDisarmId[gDzCompatHoverDisarmCount] = id
+                    set gDzCompatHoverDisarmCount = gDzCompatHoverDisarmCount + 1
+                    if gDzCompatHoverDisarmCount == 1 then
+                        if gDzCompatHoverDisarmTimer == null then
+                            set gDzCompatHoverDisarmTimer = CreateTimer()
+                        endif
+                        call TimerStart(gDzCompatHoverDisarmTimer, 0., false, function DzCompat_HoverDisarmFlush)
+                    endif
+                endif
+            endif
+        else
+            call SaveReal(gDzCompatHoverPending, id, 1, DzCompat_HoverNow())
+            if not LoadBoolean(gDzCompatHoverPending, id, 0) then
+                call SaveBoolean(gDzCompatHoverPending, id, 0, true)
+                if gDzCompatHoverPendingCount >= 500 then
+                    call DzCompat_HoverFlushLeaves()
+                endif
+                set gDzCompatHoverPendingId[gDzCompatHoverPendingCount] = id
+                set gDzCompatHoverPendingCount = gDzCompatHoverPendingCount + 1
+                if gDzCompatHoverPendingCount == 1 then
+                    if gDzCompatHoverFlushTimer == null then
+                        set gDzCompatHoverFlushTimer = CreateTimer()
+                    endif
+                    call TimerStart(gDzCompatHoverFlushTimer, 0.05, true, function DzCompat_HoverLeaveTick)
+                endif
+            endif
+        endif
+    endfunction
+
     function DzFrameSetScriptByCode takes integer frame, integer eventId, code funcHandle, boolean sync returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
         local trigger trig
+        local trigger user
         if f == null or funcHandle == null or eventId < 1 then
             return
         endif
         set trig = LoadTriggerHandle(gDzCompatFrameEvt, frame, eventId)
         if trig != null then
             call DestroyTrigger(trig)
+        endif
+        set user = LoadTriggerHandle(gDzCompatFrameEvt, frame, eventId + 20)
+        if user != null then
+            call DestroyTrigger(user)
+            call RemoveSavedHandle(gDzCompatFrameEvt, frame, eventId + 20)
+        endif
+        if DZCOMPAT_HOVER_VIA_TOOLTIP and (eventId == 2 or eventId == 3) then
+            set user = CreateTrigger()
+            call TriggerAddAction(user, funcHandle)
+            call SaveTriggerHandle(gDzCompatFrameEvt, frame, eventId + 20, user)
+            call DzCompat_HoverEnroll(frame)
+            set user = null
+            set f = null
+            return
         endif
         set trig = CreateTrigger()
         call DzCompat_RegisterFrameEvents(trig, f, eventId)
@@ -1603,7 +2339,18 @@ endfunction
             call TriggerAddCondition(trig, gDzCompatClickCond)
             call TriggerAddAction(trig, function DzCompat_ClickFix)
         endif
-        call TriggerAddAction(trig, funcHandle)
+        if eventId == 2 or eventId == 3 then
+            // hover events go through a relay that swallows same-tick LEAVE+ENTER flaps
+            set user = CreateTrigger()
+            call TriggerAddAction(user, funcHandle)
+            call SaveTriggerHandle(gDzCompatFrameEvt, frame, eventId + 20, user)
+            call TriggerAddAction(trig, function DzCompat_HoverRelay)
+            set gDzCompatHoverRelayCode = function DzCompat_HoverRelay
+            set gDzCompatHoverEnterCode = function DzCompat_MouseFocusEnter
+        else
+            call TriggerAddAction(trig, funcHandle)
+        endif
+        set user = null
         call SaveTriggerHandle(gDzCompatFrameEvt, frame, eventId, trig)
         set trig = null
     endfunction
@@ -1690,6 +2437,9 @@ endfunction
 
     function DzGetTriggerUIEventFrame takes nothing returns integer
         local framehandle f = BlzGetTriggerFrame()
+        if gDzCompatHoverOverride then
+            return gDzCompatHoverOverrideId
+        endif
         if f == null or not HaveSavedInteger(gDzCompatReverseLookup, GetHandleId(f), 0) then
             return 0
         endif
