@@ -139,6 +139,7 @@ final class UnitModelPatcher {
             if (b == '\\') out.write('\\');
         }
         put(out, "\"" + eol);
+        put(out, eol);
     }
 
     private static void put(ByteArrayOutputStream out, String ascii) throws IOException {
