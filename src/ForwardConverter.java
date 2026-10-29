@@ -476,7 +476,7 @@ final class ForwardConverter {
         List<String> modelPathLines = Collections.emptyList();
         if (needsUnitModelTable) {
             Map<String, String> tableModelPaths = SlkTableRegistry.buildUnitModelPathIndex(slkTableDir, logger);
-            modelPathLines = ModelPathRegistry.buildRegistry(jassScript, slkTableDir, tableModelPaths, logger);
+            modelPathLines = ModelPathRegistry.buildRegistry(jassScript, slkTableDir, tableModelPaths, inputCharset, logger);
         }
 
         // Find first endglobals
