@@ -11,6 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -50,6 +51,11 @@ final class ModelPathRegistry {
         Pattern p = Pattern.compile(
                 "\\b(?:Dz)?SetUnitModel\\s*\\([^\"]*?,\\s*\"([^\"]+)\"",
                 Pattern.CASE_INSENSITIVE);
+        Pattern callStart = Pattern.compile("\\b(?:Dz)?SetUnitModel\\s*\\(", Pattern.CASE_INSENSITIVE);
+        // Variable names (array or scalar) passed as the path argument, e.g.
+        // DzSetUnitModel(u, udg_RWMX[i]); their string-literal assignments are collected below.
+        LinkedHashSet<String> pathVars = new LinkedHashSet<>();
+        Pattern varArg = Pattern.compile("^([A-Za-z_][A-Za-z0-9_]*)\\s*(?:\\[.*\\])?$", Pattern.DOTALL);
         for (String line : lines) {
             if (line.trim().startsWith("//")) {
                 continue;
@@ -66,8 +72,82 @@ final class ModelPathRegistry {
                     paths.add(path);
                 }
             }
+            Matcher cm = callStart.matcher(line);
+            while (cm.find()) {
+                if (commentStart >= 0 && commentStart < cm.start()) {
+                    continue;
+                }
+                String arg = secondArgument(line, cm.end());
+                if (arg == null) {
+                    continue;
+                }
+                Matcher vm = varArg.matcher(arg.trim());
+                if (vm.matches()) {
+                    pathVars.add(vm.group(1));
+                }
+            }
+        }
+        if (!pathVars.isEmpty()) {
+            collectVariableModelPaths(lines, pathVars, paths);
         }
         return paths;
+    }
+
+    /**
+     * Text of the 2nd top-level argument of the call whose '(' ends just before {@code from},
+     * or null if the call does not close on this line. Strings and nested (), [] are skipped.
+     */
+    private static String secondArgument(String line, int from) {
+        int depth = 0;
+        int argIndex = 0;
+        int argStart = from;
+        boolean inString = false;
+        for (int i = from; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (inString) {
+                if (c == '\\') i++;
+                else if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') inString = true;
+            else if (c == '(' || c == '[') depth++;
+            else if (c == ')' || c == ']') {
+                if (depth == 0) {
+                    return argIndex == 1 ? line.substring(argStart, i) : null;
+                }
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                if (argIndex == 1) return line.substring(argStart, i);
+                argIndex++;
+                argStart = i + 1;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Adds every model-path string literal assigned to one of {@code vars}:
+     * {@code set name[idx] = "x.mdl"}, {@code set name = "x.mdl"}, {@code local string name = "x.mdl"}
+     * and a global declaration {@code string name = "x.mdl"}. Only values ending in .mdl/.mdx are
+     * taken, so unrelated strings stored in the same variable are not turned into new units.
+     * Matching is by name only (scope is ignored); an extra registered path is harmless.
+     */
+    private static void collectVariableModelPaths(List<String> lines, Set<String> vars,
+                                                  LinkedHashSet<String> paths) {
+        Pattern assign = Pattern.compile(
+                "^\\s*(?:set\\s+|(?:local\\s+|constant\\s+)?string\\s+)([A-Za-z_][A-Za-z0-9_]*)\\s*(?:\\[.*\\])?\\s*=\\s*"
+                + "\"((?:[^\"\\\\]|\\\\.)*)\"\\s*(?://.*)?$");
+        for (String line : lines) {
+            Matcher m = assign.matcher(line);
+            if (!m.matches() || !vars.contains(m.group(1))) {
+                continue;
+            }
+            String path = JassStrings.unescape(m.group(2)).trim();
+            String ext = path.length() >= 4 ? path.substring(path.length() - 4).toLowerCase(Locale.ROOT) : "";
+            if (ext.equals(".mdl") || ext.equals(".mdx")) {
+                paths.add(path);
+            }
+        }
     }
 
 

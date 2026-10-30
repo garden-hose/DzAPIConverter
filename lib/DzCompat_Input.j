@@ -1333,6 +1333,9 @@ endglobals
             return
         endif
         call SaveInteger(gDzCompatModelPathTable, StringHash(modelPath), 0, skinId)
+        set gDzCompatModelPaths[gDzCompatModelCount] = modelPath
+        set gDzCompatModelSkins[gDzCompatModelCount] = skinId
+        set gDzCompatModelCount = gDzCompatModelCount + 1
     endfunction
 
     // [APPROX] DzSetUnitModel -> BlzSetUnitSkin
@@ -1342,10 +1345,22 @@ endglobals
     //   3) otherwise no-op (skin id 0)
     function DzSetUnitModel takes unit whichUnit, string path returns nothing
         local integer skinId
+        local integer i = 0
         if path == null or path == "" then
             return
         endif
         set skinId = DzCompat_StringToRawcode(path)
+        if skinId == 0 then
+            // exact string match first (hash-free); the hashtable is only a fallback
+            loop
+                exitwhen i >= gDzCompatModelCount
+                if gDzCompatModelPaths[i] == path then
+                    set skinId = gDzCompatModelSkins[i]
+                    exitwhen true
+                endif
+                set i = i + 1
+            endloop
+        endif
         if skinId == 0 then
             set skinId = LoadInteger(gDzCompatModelPathTable, StringHash(path), 0)
         endif

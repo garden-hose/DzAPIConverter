@@ -13,6 +13,11 @@ globals
     constant integer SILENCE_ABILITY_ID = 'ACsi'
     // model path string -> skin rawcode (DzSetUnitModel registry)
     hashtable gDzCompatModelPathTable = InitHashtable()
+    // Same registry as exact-match arrays: StringHash can collide or mangle strings that are not valid
+    // UTF-8 (encrypted model names), so DzSetUnitModel compares the path strings themselves.
+    string  array gDzCompatModelPaths
+    integer array gDzCompatModelSkins
+    integer gDzCompatModelCount = 0
     // Diagnostics are silent by default: a warning is a message for the map author, and players
     // should not see it in the chat. Set to true in a test build to see them on screen.
     constant boolean DZCOMPAT_DEBUG_MESSAGES = false
