@@ -18,6 +18,9 @@ globals
     group     gDzCompatSelectGroup = CreateGroup()
     // [DESYNC FIX] one location made at map init for DzGetMouseTerrainZ (no per-call handle in local code)
     location  gDzCompatTerrainZLoc = Location(0., 0.)
+    // DzGroupGetCount: one scratch group made at map init (no per-call handle) and the live-unit counter
+    group     gDzCompatGroupCountTmp = CreateGroup()
+    integer   gDzCompatGroupCountN = 0
 endglobals
 
     function DzCompat_OnMouseMoveTrack takes nothing returns nothing
@@ -532,8 +535,32 @@ endglobals
     // ============================================================================
 
     // ---- unit group accessors -------------------------------------------
+    // ForGroup callback of DzGroupGetCount: counts a unit and keeps it in the scratch group.
+    // ForGroup does not visit a unit that was removed from the game, BlzGroupGetSize still counts it.
+    function DzCompat_GroupCountUnit takes nothing returns nothing
+        set gDzCompatGroupCountN = gDzCompatGroupCountN + 1
+        call GroupAddUnit(gDzCompatGroupCountTmp, GetEnumUnit())
+    endfunction
+
+    // The KK platform does not count units that are already removed from the game, but
+    // BlzGroupGetSize does, so a map that waits for its group to reach 0 (a boss phase)
+    // never got there. The units ForGroup still visits are counted, and when some were
+    // not visited the group is rebuilt from them so the stale entries stop being counted.
     function DzGroupGetCount takes group g returns integer
-        return BlzGroupGetSize(g)
+        local integer size = BlzGroupGetSize(g)
+        local integer alive
+        if size == 0 then
+            return 0
+        endif
+        set gDzCompatGroupCountN = 0
+        call ForGroup(g, function DzCompat_GroupCountUnit)
+        set alive = gDzCompatGroupCountN
+        if alive < size then
+            call GroupClear(g)
+            call BlzGroupAddGroupFast(gDzCompatGroupCountTmp, g)
+        endif
+        call GroupClear(gDzCompatGroupCountTmp)
+        return alive
     endfunction
 
     function DzGroupGetUnitAt takes group g, integer index returns unit

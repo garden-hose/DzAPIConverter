@@ -26,6 +26,11 @@ import java.util.regex.Pattern;
  *
  * The pragma line is removed. Only real code lines are looked at: the call-site count
  * ignores string literals and // comments.
+ *
+ * <p>Independent of the pragma, in every function of the script: {@code return null} in a
+ * function that returns code becomes {@code return function DzCompat_NullCode}, and a bare
+ * {@code return} in a function that returns a value gets a neutral value, because the 3.0
+ * compiler refuses both and the old one let them through.
  */
 final class ReturnBugFixer {
 
@@ -38,6 +43,10 @@ final class ReturnBugFixer {
             Pattern.compile("^\\s*//#\\s*\\+nosemanticerror\\s*$");
     private static final Pattern FUNCTION_LINE =
             Pattern.compile("^(\\s*)(?:constant\\s+)?function\\s+(\\w+)\\s+takes\\s+(.*?)\\s+returns\\s+(\\w+)\\s*(?://.*)?$");
+    private static final Pattern RETURN_NULL =
+            Pattern.compile("^(\\s*return\\s+)null(\\s*)$");
+    private static final Pattern RETURN_BARE =
+            Pattern.compile("^(\\s*return)(\\s*)$");
     private static final Pattern NULL_CODE_DECL =
             Pattern.compile("^\\s*function\\s+" + NULL_CODE + "\\s+takes\\b");
 
@@ -62,15 +71,21 @@ final class ReturnBugFixer {
         final List<Fixed> fixed;
         /** Pragma lines that were not followed by a function (left in place). */
         final int strayPragmas;
+        /** {@code return null} lines of functions that return code, rewritten anywhere in the script. */
+        final int nullCodeReturns;
+        /** Bare {@code return} lines of functions that return a value, given a neutral value. */
+        final int emptyReturns;
 
-        Result(List<String> lines, List<Fixed> fixed, int strayPragmas) {
+        Result(List<String> lines, List<Fixed> fixed, int strayPragmas, int nullCodeReturns, int emptyReturns) {
             this.lines = lines;
             this.fixed = fixed;
             this.strayPragmas = strayPragmas;
+            this.nullCodeReturns = nullCodeReturns;
+            this.emptyReturns = emptyReturns;
         }
 
         boolean changedAnything() {
-            return !fixed.isEmpty();
+            return !fixed.isEmpty() || nullCodeReturns > 0 || emptyReturns > 0;
         }
     }
 
@@ -130,6 +145,14 @@ final class ReturnBugFixer {
             i = end; // the endfunction line is copied by the normal path
         }
 
+        // Every function of the script, pragma or not (the ones rewritten above already
+        // compile and are not touched again).
+        int[] counts = new int[2];
+        int firstReturnAt = fixReturns(out, counts);
+        if (firstReturnAt >= 0 && (firstCodeAt < 0 || firstReturnAt < firstCodeAt)) {
+            firstCodeAt = firstReturnAt;
+        }
+
         if (firstCodeAt >= 0 && !declaresNullCode(out)) {
             out.add(firstCodeAt, "");
             out.add(firstCodeAt, "endfunction");
@@ -139,7 +162,67 @@ final class ReturnBugFixer {
         for (Fixed fx : fixed) {
             fx.uses = countUses(out, fx.name);
         }
-        return new Result(out, fixed, stray);
+        return new Result(out, fixed, stray, counts[0], counts[1]);
+    }
+
+    /**
+     * {@code return null} in a function that returns code -> {@code return function DzCompat_NullCode};
+     * a bare {@code return} in a function that returns a value -> a neutral value. Counts go into
+     * {@code counts} (0 = null code, 1 = bare return). Returns the index of the first function
+     * that now points at DzCompat_NullCode, or -1: the empty function has to be declared above it.
+     */
+    private static int fixReturns(List<String> lines, int[] counts) {
+        int firstCodeAt = -1;
+        String type = null;
+        int functionAt = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i);
+            Matcher fm = FUNCTION_LINE.matcher(line);
+            if (fm.matches()) {
+                type = fm.group(4);
+                functionAt = i;
+                continue;
+            }
+            String t = line.trim();
+            if (t.equals("endfunction") || t.startsWith("endfunction ")
+                    || t.startsWith("endfunction\t") || t.startsWith("endfunction//")) {
+                type = null;
+                continue;
+            }
+            if (type == null || type.equals("nothing")) continue;
+
+            int end = JassExpr.codeEnd(line);
+            String code = line.substring(0, end);
+            String comment = line.substring(end);
+            if (type.equals("code")) {
+                Matcher m = RETURN_NULL.matcher(code);
+                if (m.matches()) {
+                    lines.set(i, m.group(1) + "function " + NULL_CODE + m.group(2) + comment);
+                    counts[0]++;
+                    if (firstCodeAt < 0) firstCodeAt = functionAt;
+                    continue;
+                }
+            }
+            Matcher b = RETURN_BARE.matcher(code);
+            if (b.matches()) {
+                lines.set(i, b.group(1) + " " + neutralValue(type) + b.group(2) + comment);
+                counts[1]++;
+                if (type.equals("code") && firstCodeAt < 0) firstCodeAt = functionAt;
+            }
+        }
+        return firstCodeAt;
+    }
+
+    /** The value a bare return of a function with this return type gets. */
+    private static String neutralValue(String returnType) {
+        switch (returnType) {
+            case "integer": return "0";
+            case "real": return "0.";
+            case "boolean": return "false";
+            case "string": return "\"\"";
+            case "code": return "function " + NULL_CODE;
+            default: return "null";
+        }
     }
 
     /** Fills {@code body} for a function with this signature; returns false for a neutral body. */

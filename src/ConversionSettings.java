@@ -65,7 +65,9 @@ final class ConversionSettings {
     /** When true, the "return bug" typecast functions of old maps (the ones wrapped in the
      *  //# +nosemanticerror pragma, such as H2I) get a body Reforged 3.0 compiles, because
      *  its compiler refuses the old form. handle -> integer uses GetHandleId; casts with no
-     *  Reforged equivalent return a neutral value and are reported. Right after the
-     *  RequestExtra rename step. On by default. */
+     *  Reforged equivalent return a neutral value and are reported. In every function of the
+     *  script, pragma or not, return null in a function that returns code becomes
+     *  return function DzCompat_NullCode and a bare return in a function that returns a value
+     *  gets a neutral value. Right after the RequestExtra rename step. On by default. */
     boolean fixReturnBug = true;
 }

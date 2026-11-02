@@ -38,6 +38,7 @@ final class ReverseConverter {
     static {
         WRAPPER_RESTORES.put(TimerDestroyConverter.WRAPPER, "DestroyTimer");
         WRAPPER_RESTORES.put(AbilityAddConverter.WRAPPER, "UnitAddAbility");
+        WRAPPER_RESTORES.putAll(EffectModelConverter.RESTORES);
     }
 
     /** What a marker-based reverse did, for the log. */
@@ -145,7 +146,7 @@ final class ReverseConverter {
         logger.log(now + st.natives + " native declaration(s) restored exactly as they were");
         logger.log(now + st.blocks + " injected block(s) removed, " + st.injectedLines + " line(s) injected into main() removed");
         if (st.wrapperCalls > 0) {
-            logger.log(now + "Restored " + st.wrapperCalls + " DestroyTimer/UnitAddAbility call site(s)");
+            logger.log(now + "Restored " + st.wrapperCalls + " DestroyTimer/UnitAddAbility/effect creation call site(s)");
         }
         if (st.extStateCalls > 0) {
             logger.log(now + "Restored " + st.extStateCalls + " GetUnitState/SetUnitState extended-index call site(s)");

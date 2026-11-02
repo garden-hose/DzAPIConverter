@@ -36,7 +36,7 @@ final class ConverterConstants {
         "DzFrameGetHeroManaBar", "DzFrameGetItemBarButton", "DzFrameGetMinimap",
         "DzFrameGetMinimapButton", "DzFrameGetTooltip", "DzFrameGetTopMessage",
         "DzFrameGetUnitMessage", "DzFrameGetChatMessage", "DzFrameGetPortrait",
-        "DzFrameGetWorldFrameMessage", "DzFrameGetInfoPanelBuffButton",
+        "DzFrameGetWorldFrameMessage", "DzFrameGetInfoPanelBuffButton", "DzFrameEditBlackBorders",
 		"DzGetWindowWidth", "DzGetWindowHeight", "DzIsWindowActive", "DzFrameGetUpperButtonBarButton",
         // UnitEffect / Sync
         "DzSyncData", "DzSyncDataImmediately", "DzSyncBuffer", "DzTriggerRegisterSyncData",
@@ -173,7 +173,11 @@ final class ConverterConstants {
         "JNGetMaxAttackSpeed", "JNSetMaxAttackSpeed", "JNGetSyncDelay", "JNSetSyncDelay",
         "JNSetUnitArmor", "JNSetUnitBaseDamage", "JNSetUnitAttackCooldown", "JNSetUnitAttackRange",
         "JNGetSettingLogin", "JNGetSettingLoginID", "JNLocalLogin", "JNLogin",
-        "JNObjectCharacterServerConnectCheck", "JNGetConnectionState"
+        "JNObjectCharacterServerConnectCheck", "JNGetConnectionState",
+        // DzCompat_Effect.j - effect model tracking: attaching an effect to a widget, its model, its attached scale
+        "DzBindEffect", "DzUnbindEffect", "DzSetEffectModel", "DzSetEffectAttachedModelScale",
+        // DzCompat_Morph.j - DzSetUnitID changes the unit type for real (Chaos ability), skin change as the fallback
+        "DzSetUnitID"
     ));
 
     /** Natives that read or write the local archive (DzCompat_Archive.j). With "Remove local
@@ -203,6 +207,8 @@ final class ConverterConstants {
         "DzCompat_Frame.j",
         "DzCompat_Sync.j",
         "DzCompat_UnitEffect.j",
+        "DzCompat_Effect.j",
+        "DzCompat_Morph.j",
         "DzCompat_Input.j",
 		"DzCompat_YDWE_EX.j",
         "DzCompat_Ability.j",

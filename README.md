@@ -24,7 +24,7 @@
 - Converting a script that already contains `//DZCOMPAT:` blocks writes it out unchanged; use Reverse Functions first to convert it again with other settings
 - Clear unused natives - Removes natives that are declared but never used
 - Remove indentation - Self-explanatory
-- Remove local save - Stubs out the archive save system natives (SaveServerValue, GetServerValue, Store*/GetStored*, ...). Nothing is saved and no file is written to your system. Off by default
+- Remove local save - Runs the archive save system (SaveServerValue, GetServerValue, Store*/GetStored*, ...) on an in-memory store for the current game only. Values work during the game, nothing is saved and no file is written to your system. Off by default
 
 # Notes about the frequently used natives DzSetUnitModel, EXExecuteScript, etc:
 - These require the user to extract the map tables (unit.ini, item.ini, ability.ini, etc) and convert them to .ini using w3x2lni

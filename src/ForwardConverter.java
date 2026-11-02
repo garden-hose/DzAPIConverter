@@ -138,11 +138,12 @@ final class ForwardConverter {
 
         // "Return bug" typecast functions (//# +nosemanticerror): Reforged 3.0 does not know the
         // pragma and refuses the old body, so each such function gets a body it accepts.
-        // Independent of Dz/EX usage; a script without the pragma is left untouched.
+        // Independent of Dz/EX usage. Also, in every function of the script: return null in a
+        // function that returns code, and a bare return in a function that returns a value.
         if (settings.fixReturnBug) {
             ReturnBugFixer.Result bugResult = ReturnBugFixer.fix(jassScript);
             jassScript = bugResult.lines;
-            if (bugResult.changedAnything()) {
+            if (!bugResult.fixed.isEmpty()) {
                 logger.log("[" + Timestamps.now() + "] Return bug: rewrote " + bugResult.fixed.size() +
                            " typecast function(s) with a body Reforged 3.0 compiles");
                 List<String> lost = new ArrayList<>();
@@ -156,6 +157,15 @@ final class ForwardConverter {
                                "equivalent and now return a neutral value, so what depends on them will not work: " +
                                String.join(", ", lost));
                 }
+            }
+            if (bugResult.nullCodeReturns > 0) {
+                logger.log("[" + Timestamps.now() + "] Return bug: replaced " + bugResult.nullCodeReturns +
+                           " return null in function(s) that return code with return function " +
+                           ReturnBugFixer.NULL_CODE);
+            }
+            if (bugResult.emptyReturns > 0) {
+                logger.log("[" + Timestamps.now() + "] Return bug: gave " + bugResult.emptyReturns +
+                           " bare return(s) in function(s) that return a value a neutral value");
             }
             if (bugResult.strayPragmas > 0) {
                 logger.log("[" + Timestamps.now() + "] WARNING: return bug: " + bugResult.strayPragmas +
@@ -213,6 +223,19 @@ final class ForwardConverter {
                        " DestroyTimer call site(s) to use " + TimerDestroyConverter.WRAPPER);
         }
 
+        // Effect creation / DestroyEffect call sites -> DzCompat_ wrappers that remember the model
+        // path (see EffectModelConverter). Only for a map that calls DzBindEffect, DzSetEffectModel
+        // or DzSetEffectAttachedModelScale: nothing else needs the path.
+        Set<String> effectWrappers = new LinkedHashSet<>();
+        if (NativeCallCounter.count(jassScript, EffectModelConverter.TRIGGER_NATIVES)
+                .values().stream().anyMatch(c -> c > 0)) {
+            EffectModelConverter.Result effectResult = EffectModelConverter.convert(jassScript);
+            jassScript = effectResult.lines;
+            effectWrappers = effectResult.used;
+            logger.log("[" + Timestamps.now() + "] Effect models: rewrote " + effectResult.rewritten +
+                       " AddSpecialEffect*/DestroyEffect call site(s) to remember the model path for DzBindEffect");
+        }
+
         // Collect native declarations that have real implementations
         List<Integer> nativeIndices = new ArrayList<>();
         List<String> nativeNames = new ArrayList<>();
@@ -235,11 +258,11 @@ final class ForwardConverter {
             if (!settings.unlockStubs && ConverterConstants.UNLOCK_GATED_NATIVES.contains(name)) {
                 implemented = true;
             }
-            // "Remove local save": the archive-backed natives are never implemented - they are
-            // stubbed below instead, so nothing is saved and no file is written.
+            // "Remove local save": the save/load natives keep their implementation (they run on the
+            // session-only memory store, see LOCAL_SAVE_ENTRY_STUBS). Only the natives whose answer
+            // comes from saved platform data (map level, mall items, guild) are stubbed below.
             if (settings.removeLocalSave && implemented
-                    && (ConverterConstants.LOCAL_SAVE_NATIVES.contains(name)
-                        || ConverterConstants.UNLOCK_GATED_NATIVES.contains(name))) {
+                    && ConverterConstants.UNLOCK_GATED_NATIVES.contains(name)) {
                 implemented = false;
                 localSaveStubbed.add(name);
             }
@@ -266,6 +289,8 @@ final class ForwardConverter {
             neededNames.add(TimerDestroyConverter.WRAPPER);
         }
 
+        neededNames.addAll(effectWrappers);
+
         // EXExecuteScript is only converted when there is a table folder with table .ini
         // files to work from. With an empty "Map table path" (or a folder without table
         // files) the whole EXExecuteScript process is skipped: no real implementation is
@@ -285,8 +310,11 @@ final class ForwardConverter {
         // instead of asking for the table folder a second time.
         boolean needsUnitModelTable = neededNames.contains("DzSetUnitModel") ||
                                        ModelPathRegistry.scriptUsesDzSetUnitModel(jassScript);
+        // DzSetUnitID needs ability.ini too: one Chaos ability per target unit type is written to
+        // ability_morph.ini (see UnitTypeMorphRegistry), so it shares the prompt as well.
+        boolean needsUnitIdMorph = neededNames.contains("DzSetUnitID");
         Path slkTableDir = null;
-        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable || needsAbilityDataFieldRegistry 
+        if (neededNames.contains("EXExecuteScript") || needsHotkeyTable || needsUnitIdMorph || needsAbilityDataFieldRegistry 
 				|| needsUnitModelTable || settings.patchItemRequirements || settings.patchAbilityRequirements) {
             slkTableDir = SlkTableRegistry.resolveTableFolder(inPath, slkTablePrompt, logger);
         }
@@ -313,8 +341,8 @@ final class ForwardConverter {
         logger.log("[" + Timestamps.now() + "] Found " + realCount +
                    " native declarations with real Reforged-compatible implementations");
         if (settings.removeLocalSave) {
-            logger.log("[" + Timestamps.now() + "] Remove local save: archive save/load is stubbed out - nothing will be saved " +
-                       "and no file will be written (" + localSaveStubbed.size() + " declared native(s) stubbed" +
+            logger.log("[" + Timestamps.now() + "] Remove local save: save/load runs on a session-only memory store - values last " +
+                       "until the game ends and no file will be written (" + localSaveStubbed.size() + " declared native(s) stubbed" +
                        (localSaveStubbed.isEmpty() ? "" : ": " + String.join(", ", localSaveStubbed)) + ")");
         }
 
@@ -365,6 +393,16 @@ final class ForwardConverter {
                 neededNames.add("DzCompat_CastRangePut");
                 neededNames.add("DzCompat_FollowThroughPut");
                 neededNames.add("DzCompat_CastRangeStart");
+            }
+        }
+
+        // DzSetUnitID: one Chaos ability per target unit type (see UnitTypeMorphRegistry). The baked
+        // calls go to DzCompat_MorphChaosPut, which nothing in the library calls on its own.
+        List<String> morphLines = Collections.emptyList();
+        if (needsUnitIdMorph) {
+            morphLines = UnitTypeMorphRegistry.buildRegistry(jassScript, slkTableDir, libDir, logger);
+            if (!morphLines.isEmpty()) {
+                neededNames.add("DzCompat_MorphChaosPut");
             }
         }
 
@@ -543,6 +581,11 @@ final class ForwardConverter {
                     finalOutput.add("");
                     finalOutput.addAll(castRangeLines);
                 }
+                // Same reasoning for the DzSetUnitID Chaos abilities (calls DzCompat_MorphChaosPut).
+                if (!morphLines.isEmpty()) {
+                    finalOutput.add("");
+                    finalOutput.addAll(morphLines);
+                }
                 finalOutput.add(DzMarkers.END);
                 continue;
             }
@@ -625,6 +668,18 @@ final class ForwardConverter {
             } else {
                 logger.log("[" + Timestamps.now() + "] WARNING: function main not found - call " +
                            "ExecuteFunc(\"" + CastRangeRegistry.INIT_FUNCTION + "\") once at map init yourself");
+            }
+        }
+
+        // Same for the DzSetUnitID Chaos abilities.
+        if (!morphLines.isEmpty()) {
+            if (JassScript.injectStatementIntoMain(finalOutput,
+                    "call ExecuteFunc(\"" + UnitTypeMorphRegistry.INIT_FUNCTION + "\")")) {
+                logger.log("[" + Timestamps.now() + "] Injected " + morphLines.size() +
+                           " lines for the DzSetUnitID Chaos abilities");
+            } else {
+                logger.log("[" + Timestamps.now() + "] WARNING: function main not found - call " +
+                           "ExecuteFunc(\"" + UnitTypeMorphRegistry.INIT_FUNCTION + "\") once at map init yourself");
             }
         }
 

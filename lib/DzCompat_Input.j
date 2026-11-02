@@ -93,11 +93,14 @@ endglobals
     // shared trigger logic; when false, only the local player (UI-local keys).
     // trig may be null - Dz maps do that when they only want the callback ("call the
     // function when the key goes down") and have no trigger of their own; a private
-    // trigger is created for it then.
+    // trigger is created for it then. It is also created when a function is given: the
+    // function gets a trigger of its own, so the actions of a trigger the map passed
+    // along do not run on the key as well (on a map that passed both, the TAB key ran
+    // its login sync out of turn).
     function DzTriggerRegisterKeyEventByCode takes trigger trig, integer key, integer status, boolean sync, code funcHandle returns nothing
         local integer i = 0
         local boolean keyDown = (status != 0) // the dll tests (status != 0), not == 1
-        if trig == null then
+        if trig == null or funcHandle != null then
             set trig = CreateTrigger()
         endif
         if sync then
@@ -109,7 +112,9 @@ endglobals
         else
             call DzCompat_RegisterKeyAnyMeta(trig, GetLocalPlayer(), ConvertOsKeyType(key), keyDown)
         endif
-        call TriggerAddAction(trig, funcHandle)
+        if funcHandle != null then
+            call TriggerAddAction(trig, funcHandle)
+        endif
     endfunction
 
     // ========================================================================
@@ -911,9 +916,11 @@ endglobals
         return BlzGetTriggerPlayerMouseButton() == MOUSE_BUTTON_TYPE_MIDDLE
     endfunction
 
+    // As with the key event: a function gets a trigger of its own, so the actions of a
+    // trigger the map passed along do not run on the click as well.
     function DzTriggerRegisterMouseEventByCode takes trigger trig, integer btn, integer status, boolean sync, code funcHandle returns nothing
         local integer eventType
-        if trig == null then
+        if trig == null or funcHandle != null then
             set trig = CreateTrigger()
         endif
         if status == 1 then

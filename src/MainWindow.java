@@ -194,8 +194,9 @@ final class MainWindow {
         removeIndentationCheckbox.setToolTipText(
             "Convert only: strips leading spaces and tabs from every line of the converted map script.");
         removeLocalSaveCheckbox.setToolTipText(
-            "Convert only: stubs out the natives of the archive save system (SaveServerValue, GetServerValue, " +
-            "Store*/GetStored*, ...), so nothing is saved and no file is written to your system.");
+            "Convert only: the archive save system (SaveServerValue, GetServerValue, Store*/GetStored*, ...) " +
+            "keeps its values in memory for the current game only, so nothing is saved and no file is " +
+            "written to your system.");
         patchItemRequirementsCheckbox.setToolTipText(
             "Convert only, needs the Map table path: writes item_patched.ini next to item.ini, with an empty " +
             "Requires field added to every item that inherits a stock item and sets none. Stops Reforged's " +

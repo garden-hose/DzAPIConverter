@@ -160,7 +160,77 @@ globals
 
     // --- Chat command registration ( -save / -load ) ----------------------------
     boolean gDzArchiveChatRegistered = false
+    // --- Session-only store ---------------------------------------------------
+    // Used instead of the disk archive when the converter's "Remove local save" option is on:
+    // values live in memory for the current game only and no file is ever written.
+    // parent = player id (24 = every non-player slot), child = probed hash of the lower-cased key.
+    hashtable gDzSessionVals = InitHashtable()           // -> value
+    hashtable gDzSessionKeys = InitHashtable()           // -> lower-cased key (to tell colliding hashes apart)
 endglobals
+
+// Session-only store (see gDzSessionVals). Keys are case-insensitive, like the real server's.
+function DzCompat_Session_Pid takes player p returns integer
+    local integer pid = GetPlayerId(p)
+    if pid < 0 or pid >= 24 then
+        return 24
+    endif
+    return pid
+endfunction
+
+// Child index where the key lives, or the first free one. StringHash is only the starting point:
+// two different keys with the same hash are told apart by comparing the keys themselves.
+function DzCompat_Session_Find takes integer pid, string nk returns integer
+    local integer h = StringHash(nk)
+    local integer n = 0
+    loop
+        exitwhen not HaveSavedString(gDzSessionKeys, pid, h)
+        exitwhen LoadStr(gDzSessionKeys, pid, h) == nk
+        set h = h + 1
+        set n = n + 1
+        exitwhen n > 4096
+    endloop
+    return h
+endfunction
+
+function DzCompat_Session_Put takes player whichPlayer, string key, string value returns boolean
+    local integer pid
+    local string nk
+    local integer h
+    if whichPlayer == null or key == null or key == "" then
+        return false
+    endif
+    set pid = DzCompat_Session_Pid(whichPlayer)
+    set nk = StringCase(key, false)
+    set h = DzCompat_Session_Find(pid, nk)
+    if value == null then
+        set value = ""
+    endif
+    call SaveStr(gDzSessionKeys, pid, h, nk)
+    call SaveStr(gDzSessionVals, pid, h, value)
+    return true
+endfunction
+
+function DzCompat_Session_Get takes player whichPlayer, string key returns string
+    local integer pid
+    local string nk
+    local integer h
+    local string value
+    if whichPlayer == null or key == null or key == "" then
+        return ""
+    endif
+    set pid = DzCompat_Session_Pid(whichPlayer)
+    set nk = StringCase(key, false)
+    set h = DzCompat_Session_Find(pid, nk)
+    if not HaveSavedString(gDzSessionKeys, pid, h) then
+        return ""
+    endif
+    set value = LoadStr(gDzSessionVals, pid, h)
+    if value == null then
+        return ""
+    endif
+    return value
+endfunction
+
 
 // ---------------------------------------------------------------------------
 // Per-map name (filled in by the converter for this specific map)

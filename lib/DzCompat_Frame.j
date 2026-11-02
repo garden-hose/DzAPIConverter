@@ -161,6 +161,12 @@
         timer gDzCompatClickClock = null
         // Two click events for the same frame closer together than this are one click.
         constant real DZCOMPAT_CLICK_WINDOW = 0.20
+        // On the KK platform a frame callback registered with sync = false runs only on the
+        // machine of the player who acted; in Reforged the frame event trigger runs on every
+        // client. When true, DzFrameSetScriptByCode (and the Block / Async variants that call it)
+        // runs such a callback only for that player (see DzCompat_LocalRelay). Hover events keep
+        // their own relay. Set to false to run every callback on every client, as before.
+        constant boolean DZCOMPAT_ASYNC_LOCAL_ONLY = true
         // Dz ignores the alpha byte of a |cAARRGGBB colour code, and many maps write |c00RRGGBB
         // (alpha 00). Reforged honours it, so that text is drawn fully transparent. When true,
         // DzFrameSetText and DzFrameAddText turn every |c00 into |cff. Set to false to keep the
@@ -248,6 +254,9 @@
     timer gDzCompatHoverFlushTimer = null
     boolean gDzCompatHoverOverride = false
     integer gDzCompatHoverOverrideId = 0
+	constant boolean DZCOMPAT_BLACK_BORDERS_REMOVE = true
+    boolean gDzCompatBordersZero = false
+    timer   gDzCompatBordersTimer = CreateTimer()
     endglobals
 
     // ---- internal focus-tracking helper ----
@@ -410,6 +419,40 @@
         endif
     endfunction
 
+    // ---- sync = false: the callback runs only on the machine of the player who acted ----
+    // The map's callback sits in a trigger of its own, kept under the handle id of the frame
+    // event trigger (child key 1; a frame id is never that large, so the keys do not meet).
+    // The frame event trigger runs this relay on every client, and the relay runs the
+    // callback only where GetLocalPlayer() is the player of the event. Event responses
+    // (BlzGetTriggerFrame, GetTriggerPlayer) stay valid inside TriggerExecute, as they do for
+    // the hover relay. Nothing in here creates a handle on one client only.
+    function DzCompat_LocalRelay takes nothing returns nothing
+        local trigger user = LoadTriggerHandle(gDzCompatFrameEvt, GetHandleId(GetTriggeringTrigger()), 1)
+        if user != null and GetLocalPlayer() == GetTriggerPlayer() then
+            call TriggerExecute(user)
+        endif
+        set user = null
+    endfunction
+
+    function DzCompat_LocalRelayAdd takes trigger trig, code funcHandle returns nothing
+        local trigger user = CreateTrigger()
+        call TriggerAddAction(user, funcHandle)
+        call SaveTriggerHandle(gDzCompatFrameEvt, GetHandleId(trig), 1, user)
+        call TriggerAddAction(trig, function DzCompat_LocalRelay)
+        set user = null
+    endfunction
+
+    // Destroys the callback trigger of a frame event trigger that is being replaced.
+    function DzCompat_LocalRelayDrop takes trigger trig returns nothing
+        local integer tid = GetHandleId(trig)
+        local trigger user = LoadTriggerHandle(gDzCompatFrameEvt, tid, 1)
+        if user != null then
+            call DestroyTrigger(user)
+            call RemoveSavedHandle(gDzCompatFrameEvt, tid, 1)
+        endif
+        set user = null
+    endfunction
+
     function DzCompat_ReleaseFrame takes integer frame, boolean root returns nothing
         local framehandle f = DzCompat_GetFrame(frame)
         local integer eventId = 1
@@ -421,6 +464,7 @@
             exitwhen eventId > 40
             set trig = LoadTriggerHandle(gDzCompatFrameEvt, frame, eventId)
             if trig != null then
+                call DzCompat_LocalRelayDrop(trig)
                 call DestroyTrigger(trig)
             endif
             set eventId = eventId + 1
@@ -1921,12 +1965,14 @@ endfunction
     // Dz's eventId integers mostly reuse Reforged's FRAMEEVENT_ numbering; the exceptions,
     // read from the real client, are in DzCompat_ConvertFrameEvent below.
     //
-    // "sync" isn't reproducible as a separate mode - it's not a choice: a frame click's
+    // "sync" isn't reproducible as a separate mode for the trigger itself: a frame click's
     // trigger condition/action already runs on every client for every registrant (see
     // DzCompat_ClickGate and DzCompat_ClickFix below for what that actually implies -
     // code here must not branch on anything that can read differently per client, e.g. a
-    // frame's local enabled/visible state). Every variant below (sync, async, block)
-    // behaves identically as a result.
+    // frame's local enabled/visible state). What sync = false still means is that the map's
+    // own callback ran only for the player who acted: with DZCOMPAT_ASYNC_LOCAL_ONLY on,
+    // DzFrameSetScriptByCode hands such a callback to DzCompat_LocalRelay, which branches on
+    // GetLocalPlayer() == GetTriggerPlayer() only (the same test as DzCompat_ClickFix).
 
     // Dz frame-event ids, from the real client's translation table (kkapi_local_plugin.dll 0x10074e80,
     // dzclient_api.dll 0x10017e60, dz_w3_plugin.dll 0x10025420). The ids it produces are 1, 2, 3, 4, 6, 7,
@@ -2116,9 +2162,8 @@ endfunction
     endfunction
 
     // One script per (frame, event), as in DzAPI: registering again replaces the previous
-    // one. sync is not a real choice here - see the note above DzCompat_ClickGate: a
-    // frame click's condition/action run on every client already, regardless of this
-    // flag - so it is accepted and ignored, as before.
+    // one. The trigger itself runs on every client whatever sync says - see the note above
+    // DzCompat_ClickGate; where the map's callback runs is decided by DzFrameSetScriptByCode.
     function DzCompat_HoverDispatch takes integer id, integer eventId returns nothing
         local trigger user = LoadTriggerHandle(gDzCompatFrameEvt, id, eventId + 20)
         if user == null or DzCompat_GetFrame(id) == null then
@@ -2316,6 +2361,7 @@ endfunction
         endif
         set trig = LoadTriggerHandle(gDzCompatFrameEvt, frame, eventId)
         if trig != null then
+            call DzCompat_LocalRelayDrop(trig)
             call DestroyTrigger(trig)
         endif
         set user = LoadTriggerHandle(gDzCompatFrameEvt, frame, eventId + 20)
@@ -2347,8 +2393,10 @@ endfunction
             call TriggerAddAction(trig, function DzCompat_HoverRelay)
             set gDzCompatHoverRelayCode = function DzCompat_HoverRelay
             set gDzCompatHoverEnterCode = function DzCompat_MouseFocusEnter
-        else
+        elseif sync or not DZCOMPAT_ASYNC_LOCAL_ONLY then
             call TriggerAddAction(trig, funcHandle)
+        else
+            call DzCompat_LocalRelayAdd(trig, funcHandle)
         endif
         set user = null
         call SaveTriggerHandle(gDzCompatFrameEvt, frame, eventId, trig)
@@ -2513,13 +2561,8 @@ endfunction
     function DzEnableWideScreen takes boolean enable returns nothing
     endfunction
 
-    // [REAL] Swaps a unit's displayed model/stats-appearance to another unit type via
-    // BlzSetUnitSkin and updates the displayed name to match,
-	// since a skin change alone leaves the old name showing.
-    function DzSetUnitID takes unit whichUnit, integer id returns nothing
-        call BlzSetUnitSkin(whichUnit, id)
-        call BlzSetUnitName(whichUnit, GetObjectName(id))
-    endfunction
+    // DzSetUnitID moved to DzCompat_Morph.j (the unit type changes for real there; the skin
+    // swap this had is its fallback).
 
     // Whether the game window has focus (local). The neutral stub would answer "never active".
     function DzIsWindowActive takes nothing returns boolean
@@ -2577,4 +2620,28 @@ endfunction
             return false
         endif
         return LoadBoolean(gDzCompatFocusTrack, frame, 0)
+    endfunction
+
+    // ---- [APPROX] black borders -------------------------------------------------------
+    // A map that asks for no bottom border (height <= 0) gets the console backdrop frame
+    // shrunk to nothing, so the console strip stops drawing and taking mouse clicks.
+    // Frames parented to it keep working. Applied at once and once more on the next tick,
+    // because the frame may not exist yet when this runs from main().
+    function DzCompat_BordersApply takes nothing returns nothing
+        local framehandle f
+        if gDzCompatBordersZero and DZCOMPAT_BLACK_BORDERS_REMOVE then
+            set f = BlzGetFrameByName("ConsoleUIBackdrop", 0)
+            if f != null then
+                call BlzFrameSetSize(f, 0.0, 0.0001)
+            endif
+            set f = null
+        endif
+    endfunction
+
+    function DzFrameEditBlackBorders takes real upperHeight, real bottomHeight returns nothing
+        if bottomHeight <= 0.0 then
+            set gDzCompatBordersZero = true
+            call DzCompat_BordersApply()
+            call TimerStart(gDzCompatBordersTimer, 0.0, false, function DzCompat_BordersApply)
+        endif
     endfunction
